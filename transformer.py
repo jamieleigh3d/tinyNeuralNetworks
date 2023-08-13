@@ -16,16 +16,6 @@ class TransformerModel(nn.Module):
         output = self.transformer(embedded, embedded)
         return self.fc(output)
 
-def filter_text(text):
-    # Convert the text to lowercase
-    text = text.lower()
-    
-    # Remove punctuation and keep only alphabets and spaces
-    filtered_text = ''.join([char for char in text if char.isalpha() or char.isspace()])
-    
-    return filtered_text
-    
-    
 class WarmupThenDecaySchedule(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, warmup_steps, total_steps, last_epoch=-1):
         self.warmup_steps = warmup_steps
@@ -42,16 +32,28 @@ class WarmupThenDecaySchedule(torch.optim.lr_scheduler._LRScheduler):
         
         return [base_lr * lr_scale for base_lr in self.base_lrs]
 
+def filter_text(text):
+    # Convert the text to lowercase
+    text = text.lower()
+    
+    # Remove punctuation and keep only alphabets and spaces
+    filtered_text = ''.join([char for char in text if char.isalpha() or char.isspace()])
+    
+    return filtered_text
 
-data = "The cat sat on the mat. The dog jumped over the cat. The bird flew under the bridge."
-#data = "Artificial neural networks (ANNs, also shortened to neural networks (NNs) or neural nets) are a branch of machine learning models that are built using principles of neuronal organization discovered by connectionism in the biological neural networks constituting animal brains."
+rawdata = "Cat sat on mat. Dog jumped over cat. Bird flew under bridge."
+#rawdata = "the quick brown fox jumped over the lazy dog"
+#rawdata = "Artificial neural networks (ANNs, also shortened to neural networks (NNs) or neural nets) are a branch of machine learning models that are built using principles of neuronal organization discovered by connectionism in the biological neural networks constituting animal brains."
+
+padding_token = "PAD"
+end_of_sequence = "QUIT"
 
 # Using GPU if available
 device_string = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device_string}")
 device = torch.device(device_string)
 
-data = filter_text(data)
+data = filter_text(rawdata) + ' ' + end_of_sequence
 print(data)
 
 # Tokenize the data
@@ -60,6 +62,8 @@ print(f"Token count: {len(tokens)}")
 
 # Build vocabulary
 vocab = Counter(tokens)
+# Give it a negative count to ensure it's added last
+vocab[padding_token] = -1
 word2idx = {word: idx for idx, (word, _) in enumerate(vocab.most_common())}
 idx2word = {idx: word for word, idx in word2idx.items()}
 vocab_size = len(vocab)
@@ -68,17 +72,29 @@ vocab_size = len(vocab)
 token_indices = [word2idx[word] for word in tokens]
 
 # Create sequences of tokens
-sequence_length = 4  # "The cat sat on" -> "the"
+min_sequence_length = 8
+# "The cat sat on" -> "the"
+sequence_length = 8 #max(len(tokens),min_sequence_length)
+
 input_sequences = []
-for i in range(len(token_indices) - sequence_length):
-    input_sequences.append(token_indices[i:i+sequence_length+1])
+for s in range(1,sequence_length+1):
+    for i in range(len(token_indices) - s):
+        sequence = token_indices[i:i+s+1]
+        
+        # Pad the sequence
+        while len(sequence) < sequence_length + 1:  # +1 because we're predicting the next token
+            sequence.insert(0, word2idx[padding_token])
+        
+        input_sequences.append(sequence)
+
+print(input_sequences)
 
 print(f"input seq len: {len(input_sequences)}")
 input_sequences = torch.tensor(input_sequences).to(device)
 
 # Model hyperparameters
-d_model = 512
-nhead = 8
+d_model = 32
+nhead = 1
 num_encoder_layers = 2
 num_decoder_layers = 2
 model = TransformerModel(vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers).to(device)
@@ -94,16 +110,29 @@ total_steps = epochs
 scheduler = WarmupThenDecaySchedule(optimizer, warmup_steps, total_steps)
 
 
-def predict_next_word(model, text, word2idx, idx2word):
+def predict_next_word(model, tokens, word2idx, idx2word, sequence_length):
     model.eval()
-    tokens = text.split()[-sequence_length:]
-    token_indices = [word2idx[token] for token in tokens]
+
+    # Convert tokens to indices
+    token_indices = [word2idx[token] for token in tokens if token in word2idx]
+
+    # Pad the token_indices list with the index of the padding_token until it's of length sequence_length
+    while len(token_indices) < sequence_length:
+        token_indices.insert(0, word2idx[padding_token])
+
+    # Convert list of indices to tensor, send to device, and add a batch dimension
     input_tensor = torch.tensor(token_indices).to(device).unsqueeze(0)
+
+    # Get model output
     output = model(input_tensor)
+
+    # Determine index of most probable next word
     predicted_index = torch.argmax(output[0, -1]).item()
+
     return idx2word[predicted_index]
 
-logging_interval = 5
+logging_interval = 1
+test_length = 2
 
 for epoch in range(epochs):
     model.train()
@@ -122,12 +151,17 @@ for epoch in range(epochs):
     scheduler.step()
     if (epoch+1) % logging_interval == 0:
         model.eval()
-        phrase = "the cat sat on"
-        print(f"{phrase} ",end="")
-        for i in range(50):
-            next_word = predict_next_word(model, phrase, word2idx, idx2word)
+        phrase = ' '.join(tokens[:test_length])
+        print(f"{phrase} => ",end="")
+        for i in range(len(tokens)):
+            phrase_tokens = phrase.split()#[-sequence_length:]
+
+            next_word = predict_next_word(model, phrase_tokens, word2idx, idx2word, sequence_length)
             phrase = f"{phrase} {next_word}"
             print(f"{next_word} ",end="")
-
+            if next_word == end_of_sequence:
+                break;
+        if phrase == data:
+            break
         print(f"\nEpoch: {epoch+1}/{epochs}, Loss: {loss.item()}, Learning Rate: {scheduler.get_lr()[0]}")
 
