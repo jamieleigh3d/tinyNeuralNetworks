@@ -6,10 +6,14 @@ import torch.optim as optim
 class RhymeNN(nn.Module):
     def __init__(self, input_dim):
         super(RhymeNN, self).__init__()
-        self.fc1 = nn.Linear(input_dim*2, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, 32)
-        self.fc4 = nn.Linear(32, 1)
+        layer1_size = 64
+        layer2_size = layer1_size // 2
+        layer3_size = layer2_size // 2
+        layer4_size = 1
+        self.fc1 = nn.Linear(input_dim*2, layer1_size)
+        self.fc2 = nn.Linear(layer1_size, layer2_size)
+        self.fc3 = nn.Linear(layer2_size, layer3_size)
+        self.fc4 = nn.Linear(layer3_size, layer4_size)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x1, x2):
@@ -97,7 +101,7 @@ rawwords = [
     "stone", "phone"
 ]
 
-word_count = int(0.1*len(rawwords))
+word_count = int(0.9*len(rawwords))
 words = rawwords[:word_count]
 val_words = rawwords[word_count:]
 
@@ -133,10 +137,22 @@ labels = [1 if naive_rhyme_check(pair[0], pair[1]) else 0 for pair in pairs]
 print(f"max_length: {max_length} training num_words: {num_words} training pairs: {len(pairs)}")
 print(f"validation num_words: {len(val_words)} validation pairs: {len(val_words)*len(val_words)}")
 
+num_val_words = len(val_words)
+val_pairs = []
+for i in range(num_val_words):
+    for j in range(num_val_words):
+        val_pairs.append((val_words[i], val_words[j]))
+val_labels = [1 if naive_rhyme_check(pair[0], pair[1]) else 0 for pair in val_pairs]
+
 X_data = [(
     one_hot_encode(pair[0], char_to_index, max_length),
     one_hot_encode(pair[1], char_to_index, max_length)
 ) for pair in pairs]
+
+X_val = [(
+    one_hot_encode(pair[0], char_to_index, max_length),
+    one_hot_encode(pair[1], char_to_index, max_length)
+) for pair in val_pairs]
 
 # Using GPU if available
 device_string = "cuda" if torch.cuda.is_available() else "cpu"
@@ -148,6 +164,8 @@ input_dim = max_length * len(vocab)
 resume = False
 
 model = RhymeNN(input_dim).to(device)
+criterion = nn.BCELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 if resume:
     checkpoint = torch.load('checkpoint.pth')
@@ -155,18 +173,21 @@ if resume:
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     model.train()
 
-criterion = nn.BCELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
-
 # Convert our dataset to PyTorch tensors
-X_data_tensor = [(torch.FloatTensor(x[0]).to(device).view(-1), torch.FloatTensor(x[1]).to(device).view(-1)) for x in X_data]
+X_data_tensor = [(torch.FloatTensor(x[0]).to(device).view(-1), 
+                  torch.FloatTensor(x[1]).to(device).view(-1)) for x in X_data]
 y_data_tensor = torch.FloatTensor(labels).to(device).view(-1, 1)
+
+X_val_tensor = [(torch.FloatTensor(x[0]).to(device).view(-1), 
+                 torch.FloatTensor(x[1]).to(device).view(-1)) for x in X_val]
+y_val_tensor = torch.FloatTensor(val_labels).to(device).view(-1, 1)
 
 epochs = 30
 log_interval = 1 #5
 
 for epoch in range(epochs):
     total_loss = 0
+    model.train()
     for i, (x1, x2) in enumerate(X_data_tensor):
         optimizer.zero_grad()
         outputs = model(x1, x2)
@@ -174,8 +195,20 @@ for epoch in range(epochs):
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
+    
     if (epoch + 1) % log_interval == 0:
-        print(f'Epoch [{epoch + 1}/{epochs}], Loss: {total_loss / len(X_data_tensor):.4f}')
+        # After training on all samples, check validation loss
+        model.eval()  # Set the model to evaluation mode
+        total_val_loss = 0
+        with torch.no_grad():  # Disable gradient computation during validation
+            for i, (x1, x2) in enumerate(X_val_tensor):
+                outputs = model(x1, x2)
+                val_loss = criterion(outputs, y_val_tensor[i])
+                total_val_loss += val_loss.item()
+        avg_train_loss = total_loss / len(X_data_tensor)
+        avg_val_loss = total_val_loss / len(X_val_tensor)
+        print(f'Epoch [{epoch + 1}/{epochs}], Loss (Train/Val): {avg_train_loss:.4f} / {avg_val_loss:.4f}')
+        
         torch.save({
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
@@ -221,7 +254,6 @@ for i in range(num_words):
             #print(f"{word1} {word2}: {'1' if result else '0'} ({rhyme})")
 
 val_errors = 0
-num_val_words = len(val_words)
 print(f"Checking validation set... ({num_val_words*num_val_words} pairs)")
 for i in range(num_val_words):
     for j in range(num_val_words):
