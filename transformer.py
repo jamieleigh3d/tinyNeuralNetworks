@@ -15,6 +15,12 @@ class TransformerModel(nn.Module):
         embedded = self.embedding(src)
         output = self.transformer(embedded, embedded)
         return self.fc(output)
+        
+    def count_parameters(self):
+        total_params = sum(p.numel() for p in self.parameters())
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return total_params, trainable_params
+
 
 class WarmupThenDecaySchedule(torch.optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, warmup_steps, total_steps, last_epoch=-1):
@@ -74,7 +80,7 @@ token_indices = [word2idx[word] for word in tokens]
 # Create sequences of tokens
 min_sequence_length = 8
 # "The cat sat on" -> "the"
-sequence_length = 8 #max(len(tokens),min_sequence_length)
+sequence_length = max(len(tokens),min_sequence_length)
 
 input_sequences = []
 for s in range(1,sequence_length+1):
@@ -87,16 +93,16 @@ for s in range(1,sequence_length+1):
         
         input_sequences.append(sequence)
 
-print(input_sequences)
+#print(input_sequences)
 
 print(f"input seq len: {len(input_sequences)}")
 input_sequences = torch.tensor(input_sequences).to(device)
 
 # Model hyperparameters
-d_model = 32
+d_model = 16
 nhead = 1
-num_encoder_layers = 2
-num_decoder_layers = 2
+num_encoder_layers = 1
+num_decoder_layers = 1
 model = TransformerModel(vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers).to(device)
 
 # Hyperparameters
@@ -108,6 +114,10 @@ optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 warmup_steps = 10
 total_steps = epochs
 scheduler = WarmupThenDecaySchedule(optimizer, warmup_steps, total_steps)
+
+total, trainable = model.count_parameters()
+print(f"Total Parameters: {total:,}")
+print(f"Trainable Parameters: {trainable:,}")
 
 
 def predict_next_word(model, tokens, word2idx, idx2word, sequence_length):
@@ -153,7 +163,7 @@ for epoch in range(epochs):
         model.eval()
         phrase = ' '.join(tokens[:test_length])
         print(f"{phrase} => ",end="")
-        for i in range(len(tokens)):
+        for i in range(len(tokens)+4):
             phrase_tokens = phrase.split()#[-sequence_length:]
 
             next_word = predict_next_word(model, phrase_tokens, word2idx, idx2word, sequence_length)
