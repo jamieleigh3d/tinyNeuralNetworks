@@ -1,124 +1,133 @@
-import numpy as np
+from collections import Counter
+import torch
+import torch.nn as nn
+import string
 
-class MLP:
-    def __init__(self, input_size, hidden_sizes, output_size):
-        self.weights = []
-        self.biases = []
-        self.activations = []
+class TransformerModel(nn.Module):
+    def __init__(self, vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers):
+        super(TransformerModel, self).__init__()
 
-        # Initializing weights and biases for each layer
-        prev_size = input_size
-        for size in hidden_sizes + [output_size]:
-            self.weights.append(np.random.randn(prev_size, size) * 0.01)
-            self.biases.append(np.zeros((1, size)))
-            prev_size = size
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.transformer = nn.Transformer(d_model, nhead, num_encoder_layers, num_decoder_layers)
+        self.fc = nn.Linear(d_model, vocab_size)
 
-    def forward(self, x):
-        self.activations = []
-        for weight, bias in zip(self.weights, self.biases[:-1]):
-            x = self._relu(np.dot(x, weight) + bias)
-            self.activations.append(x)
-        # For the output layer, we'll just use a linear activation for simplicity
-        output = np.dot(x, self.weights[-1]) + self.biases[-1]
-        return output
+    def forward(self, src):
+        embedded = self.embedding(src)
+        output = self.transformer(embedded, embedded)
+        return self.fc(output)
 
-    def _relu(self, x):
-        return np.maximum(0, x)
-
-    def _relu_derivative(self, x):
-        return (x > 0).astype(float)
-
-    def backward(self, x, y, output, learning_rate=0.01):
-        # Compute the derivative of the loss
-        dloss = (output - y) / output.shape[0]
-        
-        # Backpropagate the error
-        for i in reversed(range(len(self.weights))):
-            dactivation = dloss if i == len(self.weights) - 1 else self._relu_derivative(self.activations[i])
-            dloss = np.dot(dactivation, self.weights[i].T)
-            self.weights[i] -= learning_rate * np.dot(self.activations[i-1].T if i != 0 else x.T, dactivation)
-            self.biases[i] -= learning_rate * np.sum(dactivation, axis=0, keepdims=True)
-
-
-def train(network, data, labels, epochs, learning_rate):
-    for epoch in range(epochs):
-        outputs = network.forward(data)
-        loss = np.mean(0.5 * (outputs - labels) ** 2)
-        network.backward(data, labels, outputs, learning_rate)
-        print(f"Epoch {epoch + 1}/{epochs}, Loss: {loss:.4f}")
-
-
-def generate_dataset(word_list, n=2, num_pairs=1000):
-    """
-    Generates a dataset of word pairs and labels them as rhyming or not.
+def filter_text(text):
+    # Convert the text to lowercase
+    text = text.lower()
     
-    Parameters:
-    - word_list: list of words
-    - n: number of characters to consider from the end of words
-    - num_pairs: number of word pairs to generate
-
-    Returns:
-    - pairs: list of word pairs
-    - labels: list of labels (1 if rhymes, 0 if not)
-    """
+    # Remove punctuation and keep only alphabets and spaces
+    filtered_text = ''.join([char for char in text if char.isalpha() or char.isspace()])
     
-    pairs = []
-    labels = []
-
-    for _ in range(num_pairs):
-        # Randomly select two words
-        word1, word2 = np.random.choice(word_list, 2, replace=False)
+    return filtered_text
+    
+    
+class WarmupThenDecaySchedule(torch.optim.lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, warmup_steps, total_steps, last_epoch=-1):
+        self.warmup_steps = warmup_steps
+        self.total_steps = total_steps
+        super(WarmupThenDecaySchedule, self).__init__(optimizer, last_epoch)
         
-        # Check if they rhyme
-        if word1[-n:] == word2[-n:]:
-            pairs.append((word1, word2))
-            labels.append(1)  # Rhymes
+    def get_lr(self):
+        step = self.last_epoch
+        if step < self.warmup_steps:
+            lr_scale = float(step) / float(max(1, self.warmup_steps))
         else:
-            pairs.append((word1, word2))
-            labels.append(0)  # Doesn't rhyme
-
-    return pairs, labels
-
-def build_char_vocab():
-    """
-    Build a character vocabulary from a list of words.
-    """
-    words = [
-        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h',
-        'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',
-        'q', 'r', 's', 't', 'u', 'v', 'w', 'x',
-        'y', 'z', ' ', '.', ',', "'", '!', '\n', '"', '?'
-    ]
-
-    unique_chars = set(''.join(words))
-    return sorted(list(unique_chars))
-
-def char_one_hot_encode(character, char_vocab):
-    """
-    One-hot encodes a character based on the character vocabulary.
-    """
-    vector = [0] * len(char_vocab)
-    if character in char_vocab:
-        index = char_vocab.index(character)
-        vector[index] = 1
-    return vector
-
-def encode_word(word, char_vocab):
-    """
-    Encodes a word into a sequence of one-hot vectors for each character.
-    """
-    return [char_one_hot_encode(char, char_vocab) for char in word]
-
-# Example usage:
-char_vocab = build_char_vocab()
-encoded_word = encode_word("cat", char_vocab)
-
-print(encoded_word)
-
-word_list = ["cat", "bat", "dog", "bog", "mouse", "house", "goo", "too", "shine", "pine"]
-pairs, labels = generate_dataset(word_list, 2, 20)
+            decay_steps = max(1, step - self.warmup_steps)
+            lr_scale = (self.total_steps - decay_steps) / self.total_steps
+        
+        return [base_lr * lr_scale for base_lr in self.base_lrs]
 
 
-print('hello world')
-print(pairs)
-print(labels)
+data = "The cat sat on the mat. The dog jumped over the cat. The bird flew under the bridge."
+#data = "Artificial neural networks (ANNs, also shortened to neural networks (NNs) or neural nets) are a branch of machine learning models that are built using principles of neuronal organization discovered by connectionism in the biological neural networks constituting animal brains."
+
+# Using GPU if available
+device_string = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device: {device_string}")
+device = torch.device(device_string)
+
+data = filter_text(data)
+print(data)
+
+# Tokenize the data
+tokens = data.split()
+print(f"Token count: {len(tokens)}")
+
+# Build vocabulary
+vocab = Counter(tokens)
+word2idx = {word: idx for idx, (word, _) in enumerate(vocab.most_common())}
+idx2word = {idx: word for word, idx in word2idx.items()}
+vocab_size = len(vocab)
+
+# Convert tokens to tensor indices
+token_indices = [word2idx[word] for word in tokens]
+
+# Create sequences of tokens
+sequence_length = 4  # "The cat sat on" -> "the"
+input_sequences = []
+for i in range(len(token_indices) - sequence_length):
+    input_sequences.append(token_indices[i:i+sequence_length+1])
+
+print(f"input seq len: {len(input_sequences)}")
+input_sequences = torch.tensor(input_sequences).to(device)
+
+# Model hyperparameters
+d_model = 512
+nhead = 8
+num_encoder_layers = 2
+num_decoder_layers = 2
+model = TransformerModel(vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers).to(device)
+
+# Hyperparameters
+epochs = 1000
+lr = 0.001
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+warmup_steps = 10
+total_steps = epochs
+scheduler = WarmupThenDecaySchedule(optimizer, warmup_steps, total_steps)
+
+
+def predict_next_word(model, text, word2idx, idx2word):
+    model.eval()
+    tokens = text.split()[-sequence_length:]
+    token_indices = [word2idx[token] for token in tokens]
+    input_tensor = torch.tensor(token_indices).to(device).unsqueeze(0)
+    output = model(input_tensor)
+    predicted_index = torch.argmax(output[0, -1]).item()
+    return idx2word[predicted_index]
+
+logging_interval = 5
+
+for epoch in range(epochs):
+    model.train()
+    for sequence in input_sequences:
+        optimizer.zero_grad()
+
+        inputs = sequence[:-1].unsqueeze(0)
+        targets = sequence[1:].unsqueeze(0)
+        
+        outputs = model(inputs)
+        loss = criterion(outputs.view(-1, vocab_size), targets.view(-1))
+
+        loss.backward()
+        optimizer.step()
+    
+    scheduler.step()
+    if (epoch+1) % logging_interval == 0:
+        model.eval()
+        phrase = "the cat sat on"
+        print(f"{phrase} ",end="")
+        for i in range(50):
+            next_word = predict_next_word(model, phrase, word2idx, idx2word)
+            phrase = f"{phrase} {next_word}"
+            print(f"{next_word} ",end="")
+
+        print(f"\nEpoch: {epoch+1}/{epochs}, Loss: {loss.item()}, Learning Rate: {scheduler.get_lr()[0]}")
+
