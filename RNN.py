@@ -144,11 +144,11 @@ where cats play flutes, and squirrels are keen.
 in the world of seuss, where wonders convene,
 every story's a journey, every moment a dream.
 """
-text = """roses are red,
-violets are blue,
-in my head,
-i love you!
-"""
+#text = """roses are red,
+#violets are blue,
+#in my head,
+#i love you!
+#"""
 
 #text="hello world!"
 # Initialize the dataset
