@@ -112,6 +112,7 @@ rawdata = "The quick brown fox jumped over the lazy dog."
 #rawdata = "I bought this for my husband who plays the piano.  He is having a wonderful time playing these old hymns.  The music  is at times hard to read because we think the book was published for singing from more than playing from.  Great purchase though!"
 
 padding_token = "<|PAD|>"
+start_of_sequence_token = "<|STARTOFTEXT|>"
 end_of_sequence_token = "<|ENDOFTEXT|>"
 
 data = rawdata.lower()
@@ -120,6 +121,7 @@ print(data)
 
 # Tokenize the input string
 tokens = tokenize_text(data)
+tokens.insert(0, start_of_sequence_token)
 tokens.append(end_of_sequence_token)
 
 # Tokenize the data
@@ -150,7 +152,7 @@ print(token_indices)
 # Create sequences of tokens
 min_sequence_length = 8
 # "The cat sat on" -> "the"
-sequence_length = 1 #max(len(tokens),min_sequence_length)
+sequence_length = 2 #max(len(tokens),min_sequence_length)
 
 input_sequences = []
 #for s in range(0,sequence_length):
@@ -176,10 +178,10 @@ input_sequences = torch.tensor(input_sequences).to(device)
 #exit()
 
 # Model hyperparameters
-d_model = 16
-nhead = 1
-num_encoder_layers = 1
-num_decoder_layers = 1
+d_model = 128
+nhead = 2
+num_encoder_layers = 2
+num_decoder_layers = 2
 model = TransformerModel(vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers).to(device)
 
 # Hyperparameters
@@ -228,7 +230,7 @@ def predict_next_word(model, tokens, word2idx, idx2word, sequence_length, temper
 
 
 logging_interval = 5
-test_start_length = 2
+test_start_length = 3
 
 for epoch in range(epochs):
     model.train()
