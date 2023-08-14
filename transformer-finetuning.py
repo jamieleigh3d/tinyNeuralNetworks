@@ -3,7 +3,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 # Load pretrained model and tokenizer
-model_name = "gpt2-medium"  # You can change this to "gpt2-small", "gpt2-medium", "gpt2-large", or "gpt2-xl" based on your needs
+model_name = "gpt2-medium"  
+# You can change this to "gpt2-small", "gpt2-medium", "gpt2-large", or "gpt2-xl" based on your needs
 model = GPT2LMHeadModel.from_pretrained(model_name)
 tokenizer = GPT2Tokenizer.from_pretrained(model_name)
 tokenizer.pad_token = tokenizer.eos_token
