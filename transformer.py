@@ -93,46 +93,55 @@ def filter_text(text):
     
     return filtered_text
 
-def tokenize_text(text):
+def tokenize_text(text_batches):
     # This pattern recognizes words, punctuation, and spaces
     #pattern = r"[\w]+|[.,!?;]|[\s]"
     #return re.findall(pattern, text)
     
-    
     tokenizer = WordPunctTokenizer()
-    return tokenizer.tokenize(text)
+    
+    token_batches = [tokenizer.tokenize(text) for text in text_batches]
+    return token_batches
 
 # Using GPU if available
 device_string = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device_string}")
 device = torch.device(device_string)
 
-rawdata = "Cat sat on mat. Dog jumped over cat. Bird flew under bridge."
-rawdata = "The quick brown fox jumped over the lazy dog."
-#rawdata = "Artificial neural networks are a branch of machine learning models that are built using principles of neuronal organization discovered by connectionism in the biological neural networks constituting animal brains."
-#rawdata = "I bought this for my husband who plays the piano.  He is having a wonderful time playing these old hymns.  The music  is at times hard to read because we think the book was published for singing from more than playing from.  Great purchase though!"
+rawdata = ["Cat sat on mat. Dog jumped over cat. Bird flew under bridge.",
+    "The cat sat on the mat. The dog jumped over the cat. The bird flew under the bridge.",
+    "The quick brown fox jumped over the lazy dog.",
+    "Artificial neural networks are a branch of machine learning models that are built using principles of neuronal organization discovered by connectionism in the biological neural networks constituting animal brains.",
+    "I bought this for my husband who plays the piano.  He is having a wonderful time playing these old hymns.  The music  is at times hard to read because we think the book was published for singing from more than playing from.  Great purchase though!"
+]
 
 padding_token = "<|PAD|>"
 start_of_sequence_token = "<|STARTOFTEXT|>"
 end_of_sequence_token = "<|ENDOFTEXT|>"
 
-data = rawdata.lower()
+data = [r for r in rawdata]
+#.lower()
 
 print(data)
 
 # Tokenize the input string
-tokens = tokenize_text(data)
-tokens.insert(0, start_of_sequence_token)
-tokens.append(end_of_sequence_token)
+token_batches = tokenize_text(data)
+
+for b in token_batches:
+    b.insert(0, start_of_sequence_token)
+    b.append(end_of_sequence_token)
 
 # Tokenize the data
 #tokens = data.split()
-print(f"Token count: {len(tokens)}")
-print(tokens)
+print(f"Token batches count: {len(token_batches)}")
+print(token_batches)
 #quit()
 
 # Build vocabulary
-vocab = Counter(tokens)
+vocab = Counter()
+for b in token_batches:
+    vocab.update(Counter(b))
+
 # Give it a negative count to ensure it's added last
 vocab[padding_token] = -1
 word2idx = {word: idx for idx, (word, _) in enumerate(vocab.most_common())}
@@ -141,31 +150,27 @@ vocab_size = len(vocab)
 
 print(f"word2idx {word2idx}")
 
-# Convert tokens to tensor indices
-token_indices = [word2idx[word] for word in tokens]
-
-token_indices2 = token_indices.copy()
-sequence_length = len(token_indices)
-
-print(token_indices)
-#quit()
-
 # Create sequences of tokens
 min_sequence_length = 8
 # "The cat sat on" -> "the"
-sequence_length = 2 #max(len(tokens),min_sequence_length)
+sequence_length = 8 #max(len(b),min_sequence_length)
 
 input_sequences = []
-#for s in range(0,sequence_length):
-s = sequence_length
-for i in range(len(token_indices) - s):
-    sequence = token_indices[i:i+s+1]
-    
-    # Pad the sequence
-    while len(sequence) < sequence_length:
-        sequence.insert(0, word2idx[padding_token])
-    
-    input_sequences.append(sequence)
+for b in token_batches:
+    # Convert tokens to tensor indices
+    token_indices = [word2idx[word] for word in b]
+
+    print(token_indices)    
+
+    for s in range(0,sequence_length):
+        for i in range(len(token_indices) - s):
+            sequence = token_indices[i:i+s+1]
+            
+            # Pad the sequence
+            while len(sequence) < sequence_length:
+                sequence.insert(0, word2idx[padding_token])
+            
+            input_sequences.append(sequence)
 
 for seq in input_sequences:
     str = ""
@@ -179,14 +184,14 @@ input_sequences = torch.tensor(input_sequences).to(device)
 #exit()
 
 # Model hyperparameters
-d_model = 8
-nhead = 1
-d_hid = 2
-num_encoder_layers = 1
+d_model = 32
+nhead = 4
+d_hid = 32
+num_encoder_layers = 2
 model = TransformerModel(vocab_size, d_model, nhead, num_encoder_layers, d_hid).to(device)
 
 # Hyperparameters
-epochs = 1000
+epochs = 100
 lr = 0.001
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -199,7 +204,7 @@ total, trainable = model.count_parameters()
 print(f"Total Parameters: {total:,}")
 print(f"Trainable Parameters: {trainable:,}")
 
-def predict_next_word(model, tokens, word2idx, idx2word, sequence_length, temperature=0.0):
+def predict_next_word(model, tokens, word2idx, idx2word, sequence_length, temperature=0.7):
     model.eval()
 
     # Convert tokens to indices
@@ -230,8 +235,10 @@ def predict_next_word(model, tokens, word2idx, idx2word, sequence_length, temper
     return idx2word[predicted_index]
 
 
-logging_interval = 5
+logging_interval = 1
 test_start_length = 3
+generations = 5
+generate_max_tokens = 20
 
 for epoch in range(epochs):
     model.train()
@@ -248,19 +255,22 @@ for epoch in range(epochs):
         optimizer.step()
     
     scheduler.step()
+    
     if (epoch+1) % logging_interval == 0:
         model.eval()
-        phrase_tokens = tokens[:test_start_length]
-        phrase = " ".join(phrase_tokens)
-        print(f"[{phrase}] ",end="")
-        for i in range(len(tokens)+4):
-            next_token = predict_next_word(model, phrase_tokens, word2idx, idx2word, sequence_length)
-            phrase_tokens.append(next_token)
+        success_count = 0
+        print('-'*78)
+        for b in token_batches:
+            phrase_tokens = b[:test_start_length]
             phrase = " ".join(phrase_tokens)
-            print(f"{next_token} ",end="")
-            if next_token == end_of_sequence_token:
-                break;
-        if phrase_tokens == tokens:
-            break
-        print(f"\nEpoch: {epoch+1}/{epochs}, Loss: {loss.item()}, Learning Rate: {scheduler.get_lr()[0]}")
+            print(f"| [{phrase}] ",end="")
+            for j in range(generate_max_tokens):
+                next_token = predict_next_word(model, phrase_tokens, word2idx, idx2word, sequence_length)
+                phrase_tokens.append(next_token)
+                print(f"{next_token} ",end="")
+                if next_token == end_of_sequence_token:
+                    break
+            print()
+        print("|")
+        print(f"| Epoch: {epoch+1}/{epochs}, Loss: {loss.item()}, Learning Rate: {scheduler.get_lr()[0]}")
 
