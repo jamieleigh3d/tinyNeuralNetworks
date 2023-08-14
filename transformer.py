@@ -29,15 +29,16 @@ class PositionalEncoding(nn.Module):
         
 
 class TransformerModel(nn.Module):
-    def __init__(self, vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers, d_hid=16, dropout=0.1, max_len=16):
+    def __init__(self, vocab_size, d_model, nhead, num_encoder_layers, d_hid, dropout=0.1, max_len=16):
         super(TransformerModel, self).__init__()
 
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pos_encoder = PositionalEncoding(d_model, dropout=dropout, max_len=max_len)
-        self.transformer = nn.Transformer(d_model, nhead, num_encoder_layers, num_decoder_layers)
         
-        #encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, d_hid, dropout)
-        #self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_encoder_layers)
+        #self.transformer = nn.Transformer(d_model, nhead, num_encoder_layers, num_decoder_layers)
+        
+        encoder_layers = nn.TransformerEncoderLayer(d_model, nhead, d_hid, dropout)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_encoder_layers)
         
         self.fc = nn.Linear(d_model, vocab_size)
 
@@ -58,8 +59,8 @@ class TransformerModel(nn.Module):
                                          )
         embedded = self.pos_encoder(embedded)
         
-        #output = self.transformer_encoder(embedded, src_mask)
-        output = self.transformer(embedded, embedded)
+        output = self.transformer_encoder(embedded, src_mask)
+        #output = self.transformer(embedded, embedded)
         return self.fc(output)
         
     def count_parameters(self):
@@ -178,11 +179,11 @@ input_sequences = torch.tensor(input_sequences).to(device)
 #exit()
 
 # Model hyperparameters
-d_model = 128
-nhead = 2
-num_encoder_layers = 2
-num_decoder_layers = 2
-model = TransformerModel(vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers).to(device)
+d_model = 8
+nhead = 1
+d_hid = 2
+num_encoder_layers = 1
+model = TransformerModel(vocab_size, d_model, nhead, num_encoder_layers, d_hid).to(device)
 
 # Hyperparameters
 epochs = 1000
