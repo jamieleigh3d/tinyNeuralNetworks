@@ -2,6 +2,9 @@ from collections import Counter
 import torch
 import torch.nn as nn
 import string
+import nltk
+from nltk.tokenize import WordPunctTokenizer
+import re
 
 class TransformerModel(nn.Module):
     def __init__(self, vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers):
@@ -47,24 +50,42 @@ def filter_text(text):
     
     return filtered_text
 
-rawdata = "Cat sat on mat. Dog jumped over cat. Bird flew under bridge."
-#rawdata = "the quick brown fox jumped over the lazy dog"
-#rawdata = "Artificial neural networks (ANNs, also shortened to neural networks (NNs) or neural nets) are a branch of machine learning models that are built using principles of neuronal organization discovered by connectionism in the biological neural networks constituting animal brains."
+def tokenize_text(text):
+    # This pattern recognizes words, punctuation, and spaces
+    #pattern = r"[\w]+|[.,!?;]|[\s]"
+    #return re.findall(pattern, text)
+    
+    
+    tokenizer = WordPunctTokenizer()
+    return tokenizer.tokenize(text)
 
-padding_token = "PAD"
-end_of_sequence = "QUIT"
+
+rawdata = "Cat sat on mat. Dog jumped over cat. Bird flew under bridge."
+rawdata = "The quick brown fox jumped over the lazy dog."
+#rawdata = "Artificial neural networks are a branch of machine learning models that are built using principles of neuronal organization discovered by connectionism in the biological neural networks constituting animal brains."
+#rawdata = "I bought this for my husband who plays the piano.  He is having a wonderful time playing these old hymns.  The music  is at times hard to read because we think the book was published for singing from more than playing from.  Great purchase though!"
+
+padding_token = "<|PAD|>"
+end_of_sequence_token = "<|ENDOFTEXT|>"
 
 # Using GPU if available
 device_string = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device_string}")
 device = torch.device(device_string)
 
-data = filter_text(rawdata) + ' ' + end_of_sequence
+data = rawdata
+
 print(data)
 
+# Tokenize the input string
+tokens = tokenize_text(data)
+tokens.append(end_of_sequence_token)
+
 # Tokenize the data
-tokens = data.split()
+#tokens = data.split()
 print(f"Token count: {len(tokens)}")
+print(tokens)
+#quit()
 
 # Build vocabulary
 vocab = Counter(tokens)
@@ -76,24 +97,29 @@ vocab_size = len(vocab)
 
 # Convert tokens to tensor indices
 token_indices = [word2idx[word] for word in tokens]
-
+print(f"word2idx {word2idx}")
 # Create sequences of tokens
 min_sequence_length = 8
 # "The cat sat on" -> "the"
 sequence_length = max(len(tokens),min_sequence_length)
 
 input_sequences = []
-for s in range(1,sequence_length+1):
+for s in range(0,sequence_length):
     for i in range(len(token_indices) - s):
         sequence = token_indices[i:i+s+1]
         
         # Pad the sequence
-        while len(sequence) < sequence_length + 1:  # +1 because we're predicting the next token
+        while len(sequence) < sequence_length:
             sequence.insert(0, word2idx[padding_token])
         
         input_sequences.append(sequence)
 
-#print(input_sequences)
+for seq in input_sequences:
+    str = ""
+    for idx in seq:
+        str += idx2word[idx] + ' '
+#    print (f"{str} ({seq})")
+
 
 print(f"input seq len: {len(input_sequences)}")
 input_sequences = torch.tensor(input_sequences).to(device)
@@ -106,7 +132,7 @@ num_decoder_layers = 1
 model = TransformerModel(vocab_size, d_model, nhead, num_encoder_layers, num_decoder_layers).to(device)
 
 # Hyperparameters
-epochs = 1000
+epochs = 100
 lr = 0.001
 criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -119,8 +145,7 @@ total, trainable = model.count_parameters()
 print(f"Total Parameters: {total:,}")
 print(f"Trainable Parameters: {trainable:,}")
 
-
-def predict_next_word(model, tokens, word2idx, idx2word, sequence_length):
+def predict_next_word(model, tokens, word2idx, idx2word, sequence_length, temperature=0.0):
     model.eval()
 
     # Convert tokens to indices
@@ -134,15 +159,25 @@ def predict_next_word(model, tokens, word2idx, idx2word, sequence_length):
     input_tensor = torch.tensor(token_indices).to(device).unsqueeze(0)
 
     # Get model output
-    output = model(input_tensor)
+    logits = model(input_tensor)
 
-    # Determine index of most probable next word
-    predicted_index = torch.argmax(output[0, -1]).item()
+    predicted_index = -1
+    
+    if temperature == 0.0:
+        # Determine index of most probable next word
+        predicted_index = torch.argmax(logits[0, -1]).item()
+    else:
+        # Apply temperature to logits
+        probs = nn.Softmax(dim=0)(logits[0, -1] / temperature)
+
+        # Sample from the probabilities
+        predicted_index = torch.multinomial(probs, 1).item()
 
     return idx2word[predicted_index]
 
+
 logging_interval = 1
-test_length = 2
+test_start_length = 1
 
 for epoch in range(epochs):
     model.train()
@@ -161,17 +196,17 @@ for epoch in range(epochs):
     scheduler.step()
     if (epoch+1) % logging_interval == 0:
         model.eval()
-        phrase = ' '.join(tokens[:test_length])
-        print(f"{phrase} => ",end="")
+        phrase_tokens = tokens[:test_start_length]
+        phrase = " ".join(phrase_tokens)
+        print(f"[{phrase}]",end="")
         for i in range(len(tokens)+4):
-            phrase_tokens = phrase.split()#[-sequence_length:]
-
-            next_word = predict_next_word(model, phrase_tokens, word2idx, idx2word, sequence_length)
-            phrase = f"{phrase} {next_word}"
-            print(f"{next_word} ",end="")
-            if next_word == end_of_sequence:
+            next_token = predict_next_word(model, phrase_tokens, word2idx, idx2word, sequence_length)
+            phrase_tokens.append(next_token)
+            phrase = " ".join(phrase_tokens)
+            print(f"{next_token} ",end="")
+            if next_token == end_of_sequence_token:
                 break;
-        if phrase == data:
+        if phrase_tokens == tokens:
             break
         print(f"\nEpoch: {epoch+1}/{epochs}, Loss: {loss.item()}, Learning Rate: {scheduler.get_lr()[0]}")
 
