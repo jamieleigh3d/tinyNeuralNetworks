@@ -180,34 +180,29 @@ class DenoisingAutoencoder(nn.Module):
         self.label_emb = nn.Embedding(10, LABEL_EMBEDDING_SIZE)
         # Encoder
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),  # 32x256x256
+            nn.Conv2d(3, 64, kernel_size=3, padding=1),     # 3xNxN => 64xNxN
             nn.LeakyReLU(),
-            nn.MaxPool2d(2),                            # 32x128x128
-            nn.Conv2d(64, 128, kernel_size=3, padding=1), # 64x128x128
+            nn.MaxPool2d(2),                                # => 64xN/2xN/2
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),   # => 128xN/2xN/2
             nn.LeakyReLU(),
-            nn.MaxPool2d(2),                             # 64x64x64
-            nn.Conv2d(128, 512, kernel_size=3, padding=1), # 128x64x64
+            nn.MaxPool2d(2),                                # => 128xN/4xN/4
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),  # => 256xN/4xN/4
             nn.LeakyReLU(),
-            nn.MaxPool2d(8),                                # 128x8x8
+            nn.MaxPool2d(2),                                # => 256xN/8xN/8
         )
         
         # Decoder
+        self.decoder_input = nn.Linear(512 + LABEL_EMBEDDING_SIZE + TIMESTEP_EMBEDDING_SIZE, 256*32*32)
+        
+        # Decoder
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(512, 256, kernel_size=3, stride=1, padding=1),  # 128x8x8
+            nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2),          # 256xN/8xN/8 => 128xN/4xN/4
             nn.LeakyReLU(),
-            nn.ConvTranspose2d(256, 128, kernel_size=3, stride=1, padding=1),  # 64x16x16
+            nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2),           # => 64xN/2xN/2
             nn.LeakyReLU(),
-            nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2),  # 32x32x32
+            nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2),            # => 32xNxN
             nn.LeakyReLU(),
-            nn.ConvTranspose2d(64, 64, kernel_size=2, stride=2),  # 3x64x64
-            nn.LeakyReLU(),
-            nn.ConvTranspose2d(64, 64, kernel_size=2, stride=2),  # 3x64x64
-            nn.LeakyReLU(),
-            nn.ConvTranspose2d(64, 64, kernel_size=2, stride=2),  # 3x64x64
-            nn.LeakyReLU(),
-            nn.ConvTranspose2d(64, 64, kernel_size=2, stride=2),  # 3x64x64
-            nn.LeakyReLU(),
-            nn.ConvTranspose2d(64, 3, kernel_size=3, stride=1, padding=1),  # 3x128x128
+            nn.ConvTranspose2d(32, 3, kernel_size=3, stride=1, padding=1),  # => 3xNxN
             nn.Sigmoid()  # To get the pixel values between 0 and 1
         )
 
@@ -217,12 +212,16 @@ class DenoisingAutoencoder(nn.Module):
         
         #l = self.label_emb(label)
         #l = l.unsqueeze(-1).unsqueeze(-1)
-        #print(img.shape)
+        debug = False
+        if debug:
+            print(img.shape)
         x = self.encoder(img)
         #x = torch.cat([x, l, t], 1)
-        #print(x.shape)
+        if debug:
+            print(x.shape)
         x = self.decoder(x)
-        #print(x.shape)
+        if debug:
+            print(x.shape)
         return x
         
     def decode(self, noise, label, timestep):
@@ -355,7 +354,6 @@ def train_epoch(epoch, frame, batch, idx):
                 alpha = i / num_lerps
                 
                 latent_lerp = slerp(latent_start, latent_end, alpha)
-                latent_lerp = latent_lerp.view(1, 512, 4, 4)
                 
                 out = generator.decoder(latent_lerp)[0]
                 pil_image = tensor_to_image(out.detach().cpu())
