@@ -84,26 +84,26 @@ class ImageLoaderFrame(wx.Frame):
         
         self.panel.SetSizer(self.vbox)
         
-        self.start_loading()
+def load_and_display_image(frame):
+    for i, obj in enumerate(data[:6]):
+        img_path = get_filepath_for_object(obj, image_list)
         
-    def load_and_display_image(self):
-        for i, obj in enumerate(data[:6]):
-            img_path = get_filepath_for_object(obj, image_list)
-            
-            time.sleep(1)  # Simulate image processing
-            img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)#.Scale(140, 140)  # Load and scale the image
-            self.image_boxes[i].SetBitmap(wx.Bitmap(img))
-            self.image_boxes[i].Refresh()
-            
-    def start_loading(self):
-        t = threading.Thread(target=self.load_and_display_image, args=())
-        t.start()
+        time.sleep(1)  # Simulate image processing
+        img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)#.Scale(140, 140)  # Load and scale the image
 
+        wx.CallAfter(frame.image_boxes[i].SetBitmap, wx.Bitmap(img))
+
+
+def start_loading(frame):
+    t = threading.Thread(target=load_and_display_image, args=(frame,))
+    t.start()
 
 if __name__ == "__main__":
     app = wx.App(False)
     frame = ImageLoaderFrame(None, 'Image Processing GUI')
     frame.Show()
+    start_loading(frame)
+    
     app.MainLoop()
     
 print('Done!')
