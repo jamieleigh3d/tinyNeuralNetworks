@@ -8,6 +8,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torchvision
+import torchvision.models as tvm
 import random
 from PIL import Image
 
@@ -18,7 +20,7 @@ from string import punctuation
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 
-nltk.download('punkt')  # Download the necessary resource if not already downloaded
+#nltk.download('punkt')  # Download the necessary resource if not already downloaded
 
 device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using {device_string}")
@@ -238,18 +240,58 @@ class DenoisingAutoencoder(nn.Module):
 # Hyperparameters
 batch_size = 64
 learning_rate = 0.0001
-num_epochs = 100000
+num_epochs = 1000000
 noise_factor = 0.25
 logging_interval = 10
 
 generator = DenoisingAutoencoder().to(device)
 
 # Loss and Optimizer
-criterion = nn.MSELoss()
+mse_loss = nn.MSELoss()
+l1_loss = torch.nn.L1Loss()
+
 optimizer = optim.Adam(generator.parameters(), lr=learning_rate)
 
 def lerp(tensor1, tensor2, alpha):
     return (1 - alpha) * tensor1 + alpha * tensor2
+
+def slerp(tensor1, tensor2, alpha):
+    shape = tensor1.shape
+
+    tensor1 = tensor1.squeeze().view(-1)
+    tensor2 = tensor2.squeeze().view(-1)
+
+    tensor1_norm = torch.linalg.norm(tensor1)
+    tensor2_norm = torch.linalg.norm(tensor2)
+
+    # Normalize the tensors
+    tensor1 = tensor1 / tensor1_norm
+    tensor2 = tensor2 / tensor2_norm
+
+    # Compute the cosine similarity between tensors
+    dot = torch.dot(tensor1, tensor2)
+    dot = torch.clamp(dot, -1, 1)  # Numerical precision can lead to dot product slightly out of [-1, 1]
+
+    # Compute the angle (omega) between tensor1 and tensor2
+    omega = torch.acos(dot)
+
+    # Compute the slerp
+    sin_omega = torch.sin(omega)
+    slerp_val = (torch.sin((1.0 - alpha) * omega) / sin_omega) * tensor1 + (torch.sin(alpha * omega) / sin_omega) * tensor2
+
+    # Rescale to the original scale
+    slerp_val = slerp_val * (tensor1_norm + alpha * (tensor2_norm - tensor1_norm))
+
+    return slerp_val.view(shape)
+
+
+def vgg_preprocess(tensor):
+    """Adjust the tensor values to the range expected by VGG."""
+    # Mean and std values for ImageNet dataset, on which VGG was trained
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(-1, 3, 1, 1).to(tensor.device)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(-1, 3, 1, 1).to(tensor.device)
+    
+    return (tensor - mean) / std
 
 # Training Loop
 def train_epoch(epoch, frame, batch, idx):
@@ -283,14 +325,19 @@ def train_epoch(epoch, frame, batch, idx):
     # Train Generator
     optimizer.zero_grad()
     outputs = generator.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
-    loss = criterion(outputs.view(batch_size,-1), real_images)
+    
+    # Calculate the perceptual loss
+#    loss = l1_loss(outputs,
+  #                 real_images.view(batch_size,3,target_size[0],target_size[1]))
+    
+    loss = mse_loss(outputs.view(batch_size,-1), real_images)
     loss.backward()
     optimizer.step()
     
     
     show_image_list = []
 
-    if idx == 0 and epoch % logging_interval == 0:
+    if idx == 0 and (epoch + 1) % logging_interval == 0:
         with torch.no_grad():
             for img in real_images[:6]:
                 pil_image = tensor_to_image(img.view(3,target_size[0],target_size[1]).detach().cpu())
@@ -302,27 +349,33 @@ def train_epoch(epoch, frame, batch, idx):
             
             latent_start = generator.encoder(real_images[0].view(-1,3,target_size[0], target_size[1]))
             latent_end = generator.encoder(real_images[4].view(-1,3,target_size[0], target_size[1]))
+
             num_lerps = 6
             for i in range(num_lerps):
                 alpha = i / num_lerps
                 
-                latent_lerp = lerp(latent_start, latent_end, alpha)
+                latent_lerp = slerp(latent_start, latent_end, alpha)
+                latent_lerp = latent_lerp.view(1, 512, 4, 4)
                 
                 out = generator.decoder(latent_lerp)[0]
                 pil_image = tensor_to_image(out.detach().cpu())
                 show_image_list.append(pil_image)
                 
         wx.CallAfter(show_images, frame, show_image_list)
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.8f}")
+        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.12f}")
     
 
 def load_and_display_image(frame):
     
-    batch_size = 6
-    for epoch in range(num_epochs):
-        for idx, batch in enumerate(batches(data, batch_size)):
-            train_epoch(epoch, frame, batch, idx)
-            break
+    try:
+        batch_size = 6
+        for epoch in range(num_epochs):
+            for idx, batch in enumerate(batches(data, batch_size)):
+                train_epoch(epoch, frame, batch, idx)
+                break
+    except KeyboardInterrupt:
+        print("KeyboardInterrupt. exiting")
+        exit()
 
 
 def start_loading(frame):
