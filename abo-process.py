@@ -7,6 +7,7 @@ import threading
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import torchvision
 import torchvision.models as tvm
@@ -172,9 +173,9 @@ NUM_DIFFUSION_STEPS = 10
 TIMESTEP_EMBEDDING_SIZE = 10
 LABEL_EMBEDDING_SIZE = 10
 
-class DenoisingAutoencoder(nn.Module):
+class VAE(nn.Module):
     def __init__(self):
-        super(DenoisingAutoencoder, self).__init__()
+        super(VAE, self).__init__()
         
         self.timestep_emb = nn.Embedding(NUM_DIFFUSION_STEPS, TIMESTEP_EMBEDDING_SIZE)  # Embedding for timesteps
         self.label_emb = nn.Embedding(10, LABEL_EMBEDDING_SIZE)
@@ -191,8 +192,12 @@ class DenoisingAutoencoder(nn.Module):
             nn.MaxPool2d(2),                                # => 256xN/8xN/8
         )
         
+        # This will produce mu and log_var for the latent space
+        self.fc_mu = nn.Linear(256*16*16, 256)
+        self.fc_log_var = nn.Linear(256*16*16, 256)
+        
         # Decoder
-        self.decoder_input = nn.Linear(512 + LABEL_EMBEDDING_SIZE + TIMESTEP_EMBEDDING_SIZE, 256*32*32)
+        self.decoder_input = nn.Linear(256, 256*16*16)
         
         # Decoder
         self.decoder = nn.Sequential(
@@ -206,34 +211,50 @@ class DenoisingAutoencoder(nn.Module):
             nn.Sigmoid()  # To get the pixel values between 0 and 1
         )
 
+    def reparameterize(self, mu, log_var):
+        std = torch.exp(0.5 * log_var)
+        eps = torch.randn_like(std)
+        return mu + eps * std
+
     def forward(self, img):
+        debug = False
+        if debug:
+            print(img.shape)
+        
+        z, mu, log_var = self.encode(img)
+        if debug:
+            print(z.shape)
+        
+        x = self.decode(z)
+        if debug:
+            print(x.shape)
+        
+        return x, mu, log_var
+        
+    def encode(self, img):
+        x = self.encoder(img)
+        
+        x = x.view(x.size(0), -1)
+        
+        mu = self.fc_mu(x)
+        log_var = self.fc_log_var(x)
+        
+        z = self.reparameterize(mu, log_var)
+        return z, mu, log_var
+        
+    def decode(self, z): #, label, timestep):
         #t = self.timestep_emb(timestep)
         #t = t.unsqueeze(-1).unsqueeze(-1)
         
         #l = self.label_emb(label)
         #l = l.unsqueeze(-1).unsqueeze(-1)
-        debug = False
-        if debug:
-            print(img.shape)
-        x = self.encoder(img)
-        #x = torch.cat([x, l, t], 1)
-        if debug:
-            print(x.shape)
+        #z = torch.cat([z, l, t], 1)
+        
+        x = self.decoder_input(z)
+        x = x.view(x.size(0), 256, 16, 16)
+        
         x = self.decoder(x)
-        if debug:
-            print(x.shape)
-        return x
         
-    def decode(self, noise, label, timestep):
-        t = self.timestep_emb(timestep)
-        t = t.unsqueeze(-1).unsqueeze(-1)
-        
-        l = self.label_emb(label)
-        l = l.unsqueeze(-1).unsqueeze(-1)
-        
-        x = noise.unsqueeze(-1).unsqueeze(-1)
-        x = torch.cat([x, l, t], 1)
-        x = self.decoder(x)
         return x
         
 # Hyperparameters
@@ -243,13 +264,12 @@ num_epochs = 1000000
 noise_factor = 0.25
 logging_interval = 10
 
-generator = DenoisingAutoencoder().to(device)
+model = VAE().to(device)
 
 # Loss and Optimizer
 mse_loss = nn.MSELoss()
-l1_loss = torch.nn.L1Loss()
 
-optimizer = optim.Adam(generator.parameters(), lr=learning_rate)
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
 def lerp(tensor1, tensor2, alpha):
     return (1 - alpha) * tensor1 + alpha * tensor2
@@ -294,7 +314,7 @@ def vgg_preprocess(tensor):
 
 # Training Loop
 def train_epoch(epoch, frame, batch, idx):
-    generator.train()
+    model.train()
     
     images = []
     tokenized_names = []
@@ -321,23 +341,32 @@ def train_epoch(epoch, frame, batch, idx):
     
     batch_size = real_images.size(0)
     
-    # Train Generator
+    # Train model
+    #optimizer.zero_grad()
+    
+    
+    outputs, mu, log_var = model.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
+    
+    # Loss
+    recon_loss = F.binary_cross_entropy(outputs.view(batch_size,-1), real_images, reduction='sum')
+    # KL divergence
+    kld = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+    loss = recon_loss + kld
+    
+    # Backpropagation
     optimizer.zero_grad()
-    outputs = generator.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
-    
-    # Calculate the perceptual loss
-#    loss = l1_loss(outputs,
-  #                 real_images.view(batch_size,3,target_size[0],target_size[1]))
-    
-    loss = mse_loss(outputs.view(batch_size,-1), real_images)
     loss.backward()
     optimizer.step()
+    #loss = mse_loss(outputs.view(batch_size,-1), real_images)
+    #loss.backward()
+    #optimizer.step()
     
     
     show_image_list = []
 
     if idx == 0 and (epoch + 1) % logging_interval == 0:
         with torch.no_grad():
+            model.eval()
             for img in real_images[:6]:
                 pil_image = tensor_to_image(img.view(3,target_size[0],target_size[1]).detach().cpu())
                 show_image_list.append(pil_image)
@@ -346,8 +375,8 @@ def train_epoch(epoch, frame, batch, idx):
                 pil_image = tensor_to_image(out.detach().cpu())
                 show_image_list.append(pil_image)
             
-            latent_start = generator.encoder(real_images[0].view(-1,3,target_size[0], target_size[1]))
-            latent_end = generator.encoder(real_images[4].view(-1,3,target_size[0], target_size[1]))
+            latent_start,mu,log_var = model.encode(real_images[0].view(-1,3,target_size[0], target_size[1]))
+            latent_end,mu2, log_var2 = model.encode(real_images[4].view(-1,3,target_size[0], target_size[1]))
 
             num_lerps = 6
             for i in range(num_lerps):
@@ -355,7 +384,7 @@ def train_epoch(epoch, frame, batch, idx):
                 
                 latent_lerp = slerp(latent_start, latent_end, alpha)
                 
-                out = generator.decoder(latent_lerp)[0]
+                out = model.decode(latent_lerp)[0]
                 pil_image = tensor_to_image(out.detach().cpu())
                 show_image_list.append(pil_image)
                 
