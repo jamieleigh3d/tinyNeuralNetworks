@@ -13,7 +13,7 @@ device = torch.device(device_string)
 batch_size = 64
 learning_rate = 0.0002
 num_epochs = 100
-noise_factor = 0.5
+noise_factor = 0.25
 
 # Dataset & DataLoader
 transform = transforms.Compose([
@@ -50,14 +50,21 @@ class DenoisingAutoencoder(nn.Module):
             nn.MaxPool2d(2),                            # 32x14x14
             nn.Conv2d(32, 64, kernel_size=3, padding=1), # 64x14x14
             nn.ReLU(),
-            nn.MaxPool2d(2)                             # 64x7x7
+            nn.MaxPool2d(2),                             # 64x7x7
+            nn.Conv2d(64, 128, kernel_size=3, padding=1), # 128x7x7
+            nn.ReLU(),
+            nn.MaxPool2d(7),                                # 128x1x1
         )
         
         # Decoder
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2),  # 32x14x14
+            nn.ConvTranspose2d(128, 128, kernel_size=7, stride=1),  # 64x14x14
             nn.ReLU(),
-            nn.ConvTranspose2d(32, 1, kernel_size=2, stride=2),  # 1x28x28
+            nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2),  # 64x14x14
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2),  # 32x28x28
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 1, kernel_size=3, stride=1, padding=1),  # 1x28x28
             nn.Sigmoid()  # To get the pixel values between 0 and 1
         )
 
@@ -94,7 +101,7 @@ for epoch in range(num_epochs):
         real_images = data.to(device).view(data.size(0), -1)
         
         # Add noise to images
-        noisy_images = real_images + noise_factor * torch.randn(*real_images.shape).to(device)
+        noisy_images = (1-noise_factor)*real_images + noise_factor * torch.randn(*real_images.shape).to(device)
         noisy_images = torch.clamp(noisy_images, 0., 1.).view(batch_size,1,28,28)  # Ensure values are between 0 and 1
         
         # Train Generator
