@@ -17,7 +17,7 @@ learning_rate = 0.0002
 num_epochs = 100
 noise_factor = 0.25
 
-BETA = 0.05
+BETA = 0.1
 NUM_DIFFUSION_STEPS = 10
 TIMESTEP_EMBEDDING_SIZE = 10
 LABEL_EMBEDDING_SIZE = 10
@@ -41,6 +41,8 @@ transform = transforms.Compose([
 ])
 
 train_dataset = datasets.MNIST(root='./data', train=True, transform=transform, download=True)
+print(train_dataset)
+exit()
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
 
 # Define the Generator Model
@@ -101,6 +103,19 @@ class DenoisingAutoencoder(nn.Module):
         x = torch.cat([x, l, t], 1)
         x = self.decoder(x)
         return x
+        
+    def decode(self, noise, label, timestep):
+        t = self.timestep_emb(timestep)
+        t = t.unsqueeze(-1).unsqueeze(-1)
+        
+        l = self.label_emb(label)
+        l = l.unsqueeze(-1).unsqueeze(-1)
+        
+        x = noise.unsqueeze(-1).unsqueeze(-1)
+        x = torch.cat([x, l, t], 1)
+        x = self.decoder(x)
+        return x
+        
 
 
 #generator = Generator().to(device)
@@ -110,7 +125,7 @@ generator = DenoisingAutoencoder().to(device)
 criterion = nn.MSELoss()
 optimizer = optim.Adam(generator.parameters(), lr=learning_rate)
 
-NUM_DISPLAY_IMAGES = 16
+NUM_DISPLAY_IMAGES = 20
 
 # Visualization setup before the loop
 plt.figure(figsize=(10, 5))
@@ -119,7 +134,7 @@ display_images = [plt.subplot(2, NUM_DISPLAY_IMAGES//2, i + 1) for i in range(NU
 for ax in display_images:
     ax.axis('off')
 
-visualization_z = torch.randn(1, 28*28).repeat(10, 1).to(device)  # Same noise, replicated for each label
+visualization_z = torch.randn(1, 128).to(device)  # Same noise, replicated for each label
 
 logging_interval = 5
 
@@ -147,7 +162,7 @@ for epoch in range(num_epochs):
         # Train Generator
         optimizer.zero_grad()
         outputs = generator.forward(noisier_images.view(batch_size,1,28,28), labels.to(device), timestep_torch)
-        loss = criterion(outputs.view(batch_size,-1), noisy_images)
+        loss = criterion(outputs.view(batch_size,-1), real_images)
         loss.backward()
         optimizer.step()
         
@@ -155,12 +170,21 @@ for epoch in range(num_epochs):
             with torch.no_grad():
                 
                 show_images = []
-                for i in range(4):
-                    show_images.append(real_images[i].view(-1))
-                    show_images.append(noisy_images[i].view(-1))
-                    show_images.append(noisier_images[i].view(-1))
-                    show_images.append(outputs[i].view(-1))
-                
+                for i in range(10):
+                    out = generator.decode(visualization_z,
+                                       torch.tensor([i]).to(device),
+                                       torch.tensor([NUM_DIFFUSION_STEPS-1]).to(device))
+                    show_images.append(out.view(-1))
+                for i in range(NUM_DIFFUSION_STEPS):
+                    out = generator.decode(visualization_z,
+                                       torch.tensor([5]).to(device),
+                                       torch.tensor([i]).to(device))
+                    show_images.append(out.view(-1))
+                    #show_images.append(real_images[i].view(-1))
+                    #show_images.append(noisier_images[i].view(-1))
+                    #show_images.append(outputs[i].view(-1))
+                    #show_images.append(out.view(-1))
+                    
                 samples = torch.stack(show_images).view(-1, 28, 28).cpu()
 
                 for i, img in enumerate(samples[:NUM_DISPLAY_IMAGES]):
