@@ -157,7 +157,7 @@ def PIL_to_wxBitmap(pil_image):
 
 sc = None
 
-def show_images(frame, images, latent_vectors):
+def show_images(frame, images, latent_vectors=None):
     global sc
     #img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)#.Scale(140, 140)  # Load and scale the image
     for i, img in enumerate(images):
@@ -167,14 +167,15 @@ def show_images(frame, images, latent_vectors):
     tsne = TSNE(random_state=seed, n_components=2, perplexity=1, n_iter=300)
     tsne_results = tsne.fit_transform(latent_vectors)
     
-    if sc is not None:
-        sc.remove()
-    sc = plt.scatter(tsne_results[:, 0], tsne_results[:, 1])
-    plt.xlabel('t-SNE Component 1')
-    plt.ylabel('t-SNE Component 2')
-    plt.title('t-SNE visualization of latent space')
-    plt.draw()
-    plt.show()
+    if latent_vectors is not None:
+        if sc is not None:
+            sc.remove()
+        sc = plt.scatter(tsne_results[:, 0], tsne_results[:, 1])
+        plt.xlabel('t-SNE Component 1')
+        plt.ylabel('t-SNE Component 2')
+        plt.title('t-SNE visualization of latent space')
+        plt.draw()
+        plt.show()
 
 def batches(array, batch_size):
     for i in range(0, len(array), batch_size):
@@ -320,7 +321,7 @@ def weights_init(m):
         nn.init.constant_(m.bias, 0)
 # Hyperparameters
 batch_size = 64
-learning_rate = 0.001
+learning_rate = 0.0001
 num_epochs = 1000000
 noise_factor = 0.25
 logging_interval = 10
@@ -328,7 +329,7 @@ logging_interval = 10
 width = 128
 height = width
 channels = 3
-depth = 256
+depth = 512
 model = VAE(width, height, channels, depth).to(device)
 model.apply(weights_init)
 
@@ -415,7 +416,7 @@ def train_epoch(epoch, frame, batch, idx):
     
     outputs, mu, log_var, z = model.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
     
-    latent_vectors = mu
+    latent_vectors = mu.detach().cpu()
     
     # Loss
     recon_loss = F.binary_cross_entropy(outputs.view(batch_size,-1), real_images, reduction='sum')
@@ -458,8 +459,7 @@ def train_epoch(epoch, frame, batch, idx):
                 pil_image = tensor_to_image(out.detach().cpu())
                 show_image_list.append(pil_image)
             
-            
-        wx.CallAfter(show_images, frame, show_image_list, latent_vectors.detach().cpu())
+        wx.CallAfter(show_images, frame, show_image_list) #, latent_vectors)
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.12f}")
     
 
