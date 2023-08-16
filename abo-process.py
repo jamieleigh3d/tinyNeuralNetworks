@@ -105,14 +105,16 @@ def get_filepath_for_object(obj, image_list):
 
 class ImageLoaderFrame(wx.Frame):
     def __init__(self, parent, title):
-        super().__init__(parent, title=title, size=(1800, 1200))
+        super().__init__(parent, title=title, size=(2100, 1200))
         
         self.panel = wx.Panel(self)
         
         self.figure1, self.plot1 = self.create_plot()
         self.figure2, self.plot2 = self.create_plot()
+        self.figure3, self.plot3 = self.create_plot()
         self.canvas1 = FigureCanvas(self.panel, -1, self.figure1)
         self.canvas2 = FigureCanvas(self.panel, -1, self.figure2)
+        self.canvas3 = FigureCanvas(self.panel, -1, self.figure3)
         
         self.rows = 3
         self.cols = 12
@@ -134,6 +136,7 @@ class ImageLoaderFrame(wx.Frame):
         self.hbox = wx.BoxSizer(wx.HORIZONTAL)
         self.hbox.Add(self.canvas1, 1, wx.EXPAND)
         self.hbox.Add(self.canvas2, 1, wx.EXPAND)
+        self.hbox.Add(self.canvas3, 1, wx.EXPAND)
         
         self.vbox.Add(self.hbox)
         
@@ -146,23 +149,31 @@ class ImageLoaderFrame(wx.Frame):
         plot = figure.add_subplot(111)
         return figure, plot
     
-    def update_plot(self, losses):
+    def update_plot(self, vae_losses, d_losses):
         self.plot1.clear()
-        self.plot1.plot(losses)
+        self.plot1.plot(vae_losses)
         
         #self.plot1.set_yscale('log')
         self.plot1.set_xlabel('Epoch')
         self.plot1.set_ylabel('Loss')
-        self.plot1.set_title('Losses (all)')
+        self.plot1.set_title('VAE Losses (all)')
         self.canvas1.draw()
         
         self.plot2.clear()
-        self.plot2.plot(losses[-1000:])
+        self.plot2.plot(vae_losses[-1000:])
         
         self.plot2.set_xlabel('Epoch')
         self.plot2.set_ylabel('Loss')
-        self.plot2.set_title('Losses (last 1k)')
-        self.canvas2.draw()
+        self.plot2.set_title('VAE Losses (last 1k)')
+        self.canvas2.draw()        
+        
+        self.plot3.clear()
+        self.plot3.plot(d_losses)
+        
+        self.plot3.set_xlabel('Epoch')
+        self.plot3.set_ylabel('Loss')
+        self.plot3.set_title('Discriminator Losses')
+        self.canvas3.draw()
         
     def OnClose(self, event):
         # Do cleanup here, stop threads, release resources
@@ -191,9 +202,9 @@ def PIL_to_wxBitmap(pil_image):
 
 sc = None
 
-def show_images(frame, idx_images, losses, latent_vectors=None):
+def show_images(frame, idx_images, vae_losses, d_losses, latent_vectors=None):
     global sc
-    frame.update_plot(losses)
+    frame.update_plot(vae_losses, d_losses)
     
     #img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)#.Scale(140, 140)  # Load and scale the image
     for (idx, img) in idx_images:
@@ -386,7 +397,31 @@ class VAE(nn.Module):
         print(f'Checkpoint loaded from {filepath} at epoch {epoch}')
         return epoch
         
-        
+class Discriminator(nn.Module):
+    def __init__(self, width, height, channels, depth):
+        super(Discriminator, self).__init__()
+
+        self.model = nn.Sequential(
+            nn.Conv2d(channels, depth // 4, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.MaxPool2d(2),
+            
+            nn.Conv2d(depth // 4, depth // 2, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(depth // 2, depth, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2),
+            nn.MaxPool2d(2),
+
+            nn.Flatten(),
+            nn.Linear(depth * (width // 8) * (height // 8), 1),
+            nn.Sigmoid()  # Outputs a probability: real (close to 1) vs. reconstructed (close to 0)
+        )
+
+    def forward(self, img):
+        return self.model(img)
+
 def weights_init(m):
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
         nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
@@ -395,6 +430,7 @@ def weights_init(m):
     elif isinstance(m, nn.Linear):
         nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
         nn.init.constant_(m.bias, 0)
+
 # Hyperparameters
 batch_size = 64
 learning_rate = 0.001
@@ -411,8 +447,13 @@ model.apply(weights_init)
 
 # Loss and Optimizer
 mse_loss = nn.MSELoss()
-
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+d_learning_rate = 0.0001
+d_depth = 32
+discriminator = Discriminator(width, height, channels, d_depth).to(device)
+d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=d_learning_rate, betas=(0.5, 0.999))
+
 
 def lerp(tensor1, tensor2, alpha):
     return (1 - alpha) * tensor1 + alpha * tensor2
@@ -455,9 +496,13 @@ def vgg_preprocess(tensor):
     
     return (tensor - mean) / std
 
+beta = 0
+warmup_epochs = 1
+
 # Training Loop
-def train_epoch(epoch, frame, batch, image_batch, idx, losses):
+def train_epoch(epoch, frame, batch, image_batch, idx, vae_losses, d_losses):
     model.train()
+    discriminator.train()
     
     tokenized_names = []
     target_size = (model.width, model.height)
@@ -474,27 +519,51 @@ def train_epoch(epoch, frame, batch, image_batch, idx, losses):
     outputs, mu, log_var, z = model.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
     
     latent_vectors = mu.detach().cpu()
-    
+
     # Loss
+
     recon_loss = F.binary_cross_entropy(outputs.view(batch_size,-1), real_images, reduction='sum')
     #recon_loss = F.mse_loss(outputs.view(batch_size,-1), real_images)
     #recon_loss = F.l1_loss(outputs.view(batch_size,-1), real_images)
     # KL divergence
     kld = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-    loss = recon_loss + kld
+    
+    # Train Discriminator
+    # Real images
+    real_validity = discriminator(real_images.view(batch_size,3,target_size[0],target_size[1]))
+    real_loss = F.binary_cross_entropy(real_validity, torch.ones_like(real_validity))
+
+    # Reconstructed images
+    fake_validity = discriminator(outputs.detach())
+    fake_loss = F.binary_cross_entropy(fake_validity, torch.zeros_like(fake_validity))
+
+    d_loss = (real_loss + fake_loss) / 2
+
+    d_optimizer.zero_grad()
+    d_loss.backward()
+    d_optimizer.step()
+    
+    d_losses.append(d_loss.item())
+    
+    # Train Generator (VAE) with respect to Discriminator's output
+    # For the generator, we want the discriminator to 
+    # believe that the generated/reconstructed images are real
+    gen_real_or_fake = discriminator(outputs)
+    g_loss = F.binary_cross_entropy(gen_real_or_fake, torch.ones_like(fake_validity))
+
+    # Combine all losses (reconstruction, KL divergence, and GAN loss)
+    
+    beta = min(warmup_epochs,epoch) / warmup_epochs
+    loss = recon_loss + kld * beta + g_loss
     
     # Backpropagation
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
-    #loss = mse_loss(outputs.view(batch_size,-1), real_images)
-    #loss.backward()
-    #optimizer.step()
     
-    losses.append(loss.item())
+    vae_losses.append(loss.item())
     
     show_image_list = []
-    
     
     if idx == 0 and (epoch + 1) % logging_interval == 0:
         with torch.no_grad():
@@ -524,20 +593,22 @@ def train_epoch(epoch, frame, batch, image_batch, idx, losses):
                 pil_image = tensor_to_image(out.detach().cpu())
                 show_image_list.append((i+frame.cols*2,pil_image))
             
-        wx.CallAfter(show_images, frame, show_image_list, losses) #, latent_vectors)
+        wx.CallAfter(show_images, frame, show_image_list, vae_losses, d_losses) #, latent_vectors)
     
-    return loss.item()
+    return loss.item(), d_loss.item()
 
 def train(frame):
 
-    batch_size = 128
+    batch_size = 12
+    save_enabled = False
     
     image_batch = []
     target_size = (model.width, model.height)
     
     obj_batch = data[:batch_size]
     
-    losses = []
+    vae_losses = []
+    d_losses = []
     
     for obj in obj_batch:
         img_path = get_filepath_for_object(obj, image_list)
@@ -553,20 +624,21 @@ def train(frame):
                 #tokens = tokenize_without_punctuation(name)
                 #tokenized_names.append(tokens)
     
-    lowest_loss = None
+    lowest_loss = None    
     #last_epoch = model.load("vae_checkpoint.pth", optimizer)
     for epoch in range(num_epochs):
         #for idx, batch in enumerate(batches(data, batch_size)):
         idx = 0
-        loss = train_epoch(epoch, frame, obj_batch, image_batch, idx, losses)
+        loss,d_loss = train_epoch(epoch, frame, obj_batch, image_batch, idx, vae_losses, d_losses)
         
         if (epoch+1) % logging_interval == 0:
-            if lowest_loss is None:
-                lowest_loss = loss+1
-            if loss < lowest_loss:
-                lowest_loss = loss
-                model.save("vae_checkpoint.pth", optimizer, epoch)
-            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss:.12f}")
+            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss:.8f}, Disc. Loss: {d_loss:.8f}")
+            if save_enabled:
+                if lowest_loss is None:
+                    lowest_loss = loss+1
+                if loss < lowest_loss:
+                    lowest_loss = loss
+                    model.save("vae_checkpoint.pth", optimizer, epoch)
 
 
 
