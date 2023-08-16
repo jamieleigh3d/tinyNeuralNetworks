@@ -13,19 +13,40 @@ import torchvision
 import torchvision.models as tvm
 import random
 from PIL import Image
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
 
 import nltk
 from nltk.tokenize import WhitespaceTokenizer
 from string import punctuation
+import signal
 
 import sys
+
 sys.stdout.reconfigure(encoding='utf-8')
+
+def signal_handler(sig, frame):
+    # Clean up your threads here
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
 
 #nltk.download('punkt')  # Download the necessary resource if not already downloaded
 
 device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using {device_string}")
 device = torch.device(device_string)
+
+seed = 42
+np.random.seed(seed)
+random.seed(seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # If using multi-GPU
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
 
 domain_tag = 'domain_name'
 main_image_id_tag = 'main_image_id'
@@ -107,6 +128,12 @@ class ImageLoaderFrame(wx.Frame):
         
         self.panel.SetSizer(self.vbox)
 
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
+        
+    def OnClose(self, event):
+        # Do cleanup here, stop threads, release resources
+        self.Destroy()
+        wx.GetApp().ExitMainLoop()
 
 def image_to_tensor(img):
     """Convert a PIL image to a PyTorch tensor."""
@@ -118,7 +145,7 @@ def image_to_tensor(img):
 def tensor_to_image(tensor_img):
     """Convert a PyTorch tensor to a PIL image."""
     tensor_img = tensor_img.permute(1, 2, 0)  # Change dimensions to (H, W, C)
-    np_img = (tensor_img.numpy() * 255).astype(np.uint8)  # Convert tensor to [0, 255] range
+    np_img = np.clip((tensor_img.numpy() * 255), 0, 255).astype(np.uint8)  # Convert tensor to [0, 255] range
     return Image.fromarray(np_img)
 
 def PIL_to_wxBitmap(pil_image):
@@ -128,11 +155,26 @@ def PIL_to_wxBitmap(pil_image):
     bitmap = wx_image.ConvertToBitmap()  # This converts it to a wx.Bitmap
     return bitmap
 
-def show_images(frame, images):
+sc = None
+
+def show_images(frame, images, latent_vectors):
+    global sc
     #img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)#.Scale(140, 140)  # Load and scale the image
     for i, img in enumerate(images):
         bitmap = PIL_to_wxBitmap(img)
         frame.image_boxes[i].SetBitmap(bitmap)
+    
+    tsne = TSNE(random_state=seed, n_components=2, perplexity=1, n_iter=300)
+    tsne_results = tsne.fit_transform(latent_vectors)
+    
+    if sc is not None:
+        sc.remove()
+    sc = plt.scatter(tsne_results[:, 0], tsne_results[:, 1])
+    plt.xlabel('t-SNE Component 1')
+    plt.ylabel('t-SNE Component 2')
+    plt.title('t-SNE visualization of latent space')
+    plt.draw()
+    plt.show()
 
 def batches(array, batch_size):
     for i in range(0, len(array), batch_size):
@@ -174,42 +216,52 @@ TIMESTEP_EMBEDDING_SIZE = 10
 LABEL_EMBEDDING_SIZE = 10
 
 class VAE(nn.Module):
-    def __init__(self):
+    def __init__(self, width, height, channels, depth):
         super(VAE, self).__init__()
+        
+        self.width = width
+        self.height = height
+        self.channels = channels
+        self.depth = depth
+        self.latent_width = width // 8
+        self.latent_height = height // 8
         
         self.timestep_emb = nn.Embedding(NUM_DIFFUSION_STEPS, TIMESTEP_EMBEDDING_SIZE)  # Embedding for timesteps
         self.label_emb = nn.Embedding(10, LABEL_EMBEDDING_SIZE)
         # Encoder
         self.encoder = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),     # 3xNxN => 64xNxN
+            nn.Conv2d(channels, depth//4, kernel_size=3, padding=1),           # 3xNxN => depth//4 x W x H
             nn.LeakyReLU(),
-            nn.MaxPool2d(2),                                # => 64xN/2xN/2
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),   # => 128xN/2xN/2
+            nn.MaxPool2d(2),                                            # => depth//4 x W//2 x H//2
+            nn.Conv2d(depth//4, depth//2, kernel_size=3, padding=1),    # => depth//2 x W//2 x H//2
             nn.LeakyReLU(),
-            nn.MaxPool2d(2),                                # => 128xN/4xN/4
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),  # => 256xN/4xN/4
+            nn.MaxPool2d(2),                                            # => depth//2 x W//4 x H//4
+            nn.Conv2d(depth//2, depth, kernel_size=3, padding=1),       # => depth    x W//4 x H//4
             nn.LeakyReLU(),
-            nn.MaxPool2d(2),                                # => 256xN/8xN/8
+            nn.MaxPool2d(2),                                            # => depth    x W//8 x W//8
         )
         
         # This will produce mu and log_var for the latent space
-        self.fc_mu = nn.Linear(256*16*16, 256)
-        self.fc_log_var = nn.Linear(256*16*16, 256)
+        latent_len = self.latent_width * self.latent_height
+        
+        self.fc_mu = nn.Linear(depth * latent_len, depth)
+        self.fc_log_var = nn.Linear(depth * latent_len, depth)
         
         # Decoder
-        self.decoder_input = nn.Linear(256, 256*16*16)
+        self.decoder_input = nn.Linear(depth, depth * latent_len)
         
         # Decoder
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2),          # 256xN/8xN/8 => 128xN/4xN/4
+            nn.ConvTranspose2d(depth, depth//2, kernel_size=2, stride=2),               # depth x W//8 x H//8 => depth//2 x W//4 x H//4
             nn.LeakyReLU(),
-            nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2),           # => 64xN/2xN/2
+            nn.ConvTranspose2d(depth//2, depth//4, kernel_size=2, stride=2),            # => depth//4 x W//2 x H//2
             nn.LeakyReLU(),
-            nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2),            # => 32xNxN
+            nn.ConvTranspose2d(depth//4, depth//4, kernel_size=2, stride=2),            # => depth//4 x W x H
             nn.LeakyReLU(),
-            nn.ConvTranspose2d(32, 3, kernel_size=3, stride=1, padding=1),  # => 3xNxN
+            nn.ConvTranspose2d(depth//4, channels, kernel_size=3, stride=1, padding=1), # => channels x W x H
             nn.Sigmoid()  # To get the pixel values between 0 and 1
         )
+        
 
     def reparameterize(self, mu, log_var):
         std = torch.exp(0.5 * log_var)
@@ -229,7 +281,7 @@ class VAE(nn.Module):
         if debug:
             print(x.shape)
         
-        return x, mu, log_var
+        return x, mu, log_var, z
         
     def encode(self, img):
         x = self.encoder(img)
@@ -251,20 +303,34 @@ class VAE(nn.Module):
         #z = torch.cat([z, l, t], 1)
         
         x = self.decoder_input(z)
-        x = x.view(x.size(0), 256, 16, 16)
+        x = x.view(x.size(0), self.depth, self.latent_width, self.latent_height)
         
         x = self.decoder(x)
         
         return x
         
+        
+def weights_init(m):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0)
+    elif isinstance(m, nn.Linear):
+        nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
+        nn.init.constant_(m.bias, 0)
 # Hyperparameters
 batch_size = 64
-learning_rate = 0.0001
+learning_rate = 0.001
 num_epochs = 1000000
 noise_factor = 0.25
 logging_interval = 10
 
-model = VAE().to(device)
+width = 128
+height = width
+channels = 3
+depth = 256
+model = VAE(width, height, channels, depth).to(device)
+model.apply(weights_init)
 
 # Loss and Optimizer
 mse_loss = nn.MSELoss()
@@ -318,7 +384,9 @@ def train_epoch(epoch, frame, batch, idx):
     
     images = []
     tokenized_names = []
-    target_size = (128, 128)
+    target_size = (model.width, model.height)
+    
+    latent_vectors = None
     
     for obj in batch:
         img_path = get_filepath_for_object(obj, image_list)
@@ -345,7 +413,9 @@ def train_epoch(epoch, frame, batch, idx):
     #optimizer.zero_grad()
     
     
-    outputs, mu, log_var = model.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
+    outputs, mu, log_var, z = model.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
+    
+    latent_vectors = mu
     
     # Loss
     recon_loss = F.binary_cross_entropy(outputs.view(batch_size,-1), real_images, reduction='sum')
@@ -387,33 +457,33 @@ def train_epoch(epoch, frame, batch, idx):
                 out = model.decode(latent_lerp)[0]
                 pil_image = tensor_to_image(out.detach().cpu())
                 show_image_list.append(pil_image)
-                
-        wx.CallAfter(show_images, frame, show_image_list)
+            
+            
+        wx.CallAfter(show_images, frame, show_image_list, latent_vectors.detach().cpu())
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.12f}")
     
 
 def load_and_display_image(frame):
     
-    try:
-        batch_size = 6
-        for epoch in range(num_epochs):
-            for idx, batch in enumerate(batches(data, batch_size)):
-                train_epoch(epoch, frame, batch, idx)
-                break
-    except KeyboardInterrupt:
-        print("KeyboardInterrupt. exiting")
-        exit()
+    batch_size = 6
+    for epoch in range(num_epochs):
+        for idx, batch in enumerate(batches(data, batch_size)):
+            train_epoch(epoch, frame, batch, idx)
+            break
 
 
 def start_loading(frame):
     t = threading.Thread(target=load_and_display_image, args=(frame,))
+    t.daemon = True
+
     t.start()
+    return t
 
 if __name__ == "__main__":
     app = wx.App(False)
     frame = ImageLoaderFrame(None, 'Image Processing GUI')
     frame.Show()
-    start_loading(frame)
+    frame.thread = start_loading(frame)
     
     app.MainLoop()
     
