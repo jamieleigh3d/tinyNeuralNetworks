@@ -12,7 +12,7 @@ import torch.optim as optim
 import torchvision
 import torchvision.models as tvm
 import random
-from PIL import Image
+from PIL import Image as PILImage
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
@@ -110,6 +110,8 @@ class ImageLoaderFrame(wx.Frame):
         
         self.panel = wx.Panel(self)
         
+        self.SetPosition((100, 10))  # Set X and Y coordinates
+                
         self.figure1, self.plot1 = self.create_plot()
         self.figure2, self.plot2 = self.create_plot()
         self.figure3, self.plot3 = self.create_plot()
@@ -158,7 +160,7 @@ class ImageLoaderFrame(wx.Frame):
         #self.plot1.set_yscale('log')
         self.plot1.set_xlabel('Epoch')
         self.plot1.set_ylabel('Loss')
-        self.plot1.set_title('Recon Losses')
+        self.plot1.set_title('Total/Recon Losses')
         self.canvas1.draw()
         
         self.plot2.clear()
@@ -174,7 +176,7 @@ class ImageLoaderFrame(wx.Frame):
         
         self.plot3.set_xlabel('Epoch')
         self.plot3.set_ylabel('Loss')
-        self.plot3.set_title('Discriminator Losses')
+        self.plot3.set_title('Perceptual Losses')
         self.canvas3.draw()
         
     def OnClose(self, event):
@@ -193,7 +195,7 @@ def tensor_to_image(tensor_img):
     """Convert a PyTorch tensor to a PIL image."""
     tensor_img = tensor_img.permute(1, 2, 0)  # Change dimensions to (H, W, C)
     np_img = np.clip((tensor_img.numpy() * 255), 0, 255).astype(np.uint8)  # Convert tensor to [0, 255] range
-    return Image.fromarray(np_img)
+    return PILImage.fromarray(np_img)
 
 def PIL_to_wxBitmap(pil_image):
     width, height = pil_image.size
@@ -208,8 +210,9 @@ def show_images(frame, idx_images, total_losses, r_losses, kld_losses, d_losses,
     global sc
     frame.update_plot(total_losses, r_losses, kld_losses, d_losses)
     
-    #img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)#.Scale(140, 140)  # Load and scale the image
     for (idx, img) in idx_images:
+        width, height = (128,128) #img.size
+        img = img.resize((width, height))
         bitmap = PIL_to_wxBitmap(img)
         if idx >= 0 and idx < len(frame.image_boxes):
             frame.image_boxes[idx].SetBitmap(bitmap)
@@ -238,9 +241,9 @@ def tokenize_without_punctuation(text):
     return tokens_without_punctuation
     
 
-def resize_with_padding(image, target_size):
+def resize_with_padding(pil_image, target_size):
     # Calculate padding dimensions
-    width, height = image.size
+    width, height = pil_image.size
     target_width, target_height = target_size
 
     if width / height > target_width / target_height:
@@ -251,10 +254,10 @@ def resize_with_padding(image, target_size):
         new_height = target_height
 
     # Resize the image
-    resized_image = image.resize((new_width, new_height))
+    resized_image = pil_image.resize((new_width, new_height))
 
     # Create a new image with padding
-    padded_image = Image.new("RGB", target_size, "white")
+    padded_image = PILImage.new("RGB", target_size, "white")
     x_offset = (target_width - new_width) // 2
     y_offset = (target_height - new_height) // 2
     padded_image.paste(resized_image, (x_offset, y_offset))
@@ -434,6 +437,19 @@ def weights_init(m):
         nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
         nn.init.constant_(m.bias, 0)
 
+# Define a perceptual loss function using feature extractor
+class PerceptualLoss(nn.Module):
+    def __init__(self, feature_extractor):
+        super(PerceptualLoss, self).__init__()
+        
+        self.feature_extractor = feature_extractor
+        
+    def forward(self, x, y):
+        features_x = self.feature_extractor(x)
+        features_y = self.feature_extractor(y)
+        loss = nn.functional.mse_loss(features_x, features_y)
+        return loss
+
 # Hyperparameters
 batch_size = 64
 learning_rate = 0.001
@@ -441,10 +457,10 @@ num_epochs = 1000000
 noise_factor = 0.25
 logging_interval = 10
 
-width = 128
+width = 64
 height = width
 channels = 3
-depth = 128
+depth = 64
 model = VAE(width, height, channels, depth).to(device)
 model.apply(weights_init)
 
@@ -456,6 +472,16 @@ d_learning_rate = 0.0005
 d_depth = 8
 discriminator = Discriminator(width, height, channels, d_depth).to(device)
 d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=d_learning_rate, betas=(0.5, 0.999))
+
+beta_warmup_epochs = 500
+
+# Load a pretrained feature extractor (e.g., VGG16)
+feature_extractor = tvm.vgg16(weights=tvm.VGG16_Weights.IMAGENET1K_FEATURES).features.to(device)
+feature_extractor.eval()
+for param in feature_extractor.parameters():
+    param.requires_grad = False
+
+perceptual_loss = PerceptualLoss(feature_extractor)
 
 
 def lerp(tensor1, tensor2, alpha):
@@ -499,8 +525,6 @@ def vgg_preprocess(tensor):
     
     return (tensor - mean) / std
 
-beta_warmup_epochs = 500
-
 # Training Loop
 def train_epoch(epoch, frame, batch, real_images, idx):
     model.train()
@@ -527,7 +551,8 @@ def train_epoch(epoch, frame, batch, real_images, idx):
     #recon_loss = F.mse_loss(outputs.view(batch_size,-1), real_images)
     #recon_loss = F.l1_loss(outputs.view(batch_size,-1), real_images)
     
-    recon_factor = 1.0 #/ (width * height * channels)
+    # Compute perceptual loss
+    p_loss = perceptual_loss(outputs, real_images.view(batch_size, 3, model.width, model.height))
     
     # KL divergence
     kld = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
@@ -565,23 +590,29 @@ def train_epoch(epoch, frame, batch, real_images, idx):
     #g2_loss = F.binary_cross_entropy(gen_real_or_fake2, torch.zeros_like(fake_validity))
 
     # Combine all losses (reconstruction, KL divergence, and GAN loss)
-    
-    beta = 0.5*min(beta_warmup_epochs,epoch) / beta_warmup_epochs
+
+    recon_factor = 1.0 #/ (model.width * model.height * model.channels)
     r_term = recon_loss*recon_factor
-    kld_term = kld * beta
-    loss = r_term + kld_term #+ g_loss
+    
+    kld_factor = 1.0*min(beta_warmup_epochs,epoch) / beta_warmup_epochs
+    kld_term = kld * kld_factor
+    
+    p_factor = 0.0
+    p_term = p_loss * p_factor
+    
+    total_loss = r_term + kld_term + p_term #+ g_loss
     
     # Backpropagation
     optimizer.zero_grad()
-    loss.backward()
+    total_loss.backward()
     optimizer.step()
     
-    return display_outputs, r_term.item(), kld_term.item()
+    return display_outputs, total_loss.item(), r_term.item(), kld_term.item(), p_term.item()
     
 def train(frame):
 
-    batch_size = 128
-    save_enabled = True
+    batch_size = 12
+    save_enabled = False
     
     image_batch = []
     target_size = (model.width, model.height)
@@ -596,7 +627,7 @@ def train(frame):
     for obj in obj_batch:
         img_path = get_filepath_for_object(obj, image_list)
         if img_path is not None:
-            pil_image = Image.open(img_path)
+            pil_image = PILImage.open(img_path)
             pil_image = resize_with_padding(pil_image, target_size)
             name = get_itemname_for_object(obj)
             if name is not None:
@@ -615,14 +646,14 @@ def train(frame):
     for epoch in range(num_epochs):
         #for idx, batch in enumerate(batches(data, batch_size)):
         idx = 0
-        outputs,r_term,kld_term = train_epoch(epoch, frame, obj_batch, real_images, idx)
-        total_loss = r_term + kld_term
+        outputs,total_loss,r_term,kld_term,p_term = train_epoch(epoch, frame, obj_batch, real_images, idx)
         total_losses.append(total_loss)
         r_losses.append(r_term)
         kld_losses.append(kld_term)
+        d_losses.append(p_term)
         
         if (epoch+1) % logging_interval == 0:
-            print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {total_loss:.8f}, R_Loss: {r_term:.8f}, KLD Loss: {kld_term:.8f}")
+            print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {total_loss:.8f}, R_Loss: {r_term:.8f}, KLD Loss: {kld_term:.8f}, Perceptual Loss: {p_term:.8f}")
             
             show_image_list = []
     
