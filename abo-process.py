@@ -15,6 +15,8 @@ import random
 from PIL import Image
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 import nltk
 from nltk.tokenize import WhitespaceTokenizer
@@ -103,32 +105,64 @@ def get_filepath_for_object(obj, image_list):
 
 class ImageLoaderFrame(wx.Frame):
     def __init__(self, parent, title):
-        super().__init__(parent, title=title, size=(1800, 900))
+        super().__init__(parent, title=title, size=(1800, 1200))
         
         self.panel = wx.Panel(self)
         
-        # Using a FlexGridSizer for the image grid
-        self.grid = wx.FlexGridSizer(3, 6, 10, 10)
-        self.grid.AddGrowableCol(0, 1)
-        self.grid.AddGrowableCol(1, 1)
-        self.grid.AddGrowableCol(2, 1)
-        self.grid.AddGrowableCol(3, 1)
-        self.grid.AddGrowableCol(4, 1)
-        self.grid.AddGrowableCol(5, 1)
-        self.grid.AddGrowableRow(0, 1)
-        self.grid.AddGrowableRow(1, 1)
-        self.grid.AddGrowableRow(2, 1)
+        self.figure1, self.plot1 = self.create_plot()
+        self.figure2, self.plot2 = self.create_plot()
+        self.canvas1 = FigureCanvas(self.panel, -1, self.figure1)
+        self.canvas2 = FigureCanvas(self.panel, -1, self.figure2)
         
-        self.image_boxes = [wx.StaticBitmap(self.panel) for _ in range(18)]  # Create image placeholders
+        self.rows = 3
+        self.cols = 12
+        # Using a FlexGridSizer for the image grid
+        self.grid = wx.FlexGridSizer(self.rows, self.cols, 10, 10)
+        for i in range(self.cols):
+            self.grid.AddGrowableCol(i, 1)
+        for i in range(self.rows):
+            self.grid.AddGrowableRow(i, 1)
+        
+        # Create image placeholders
+        self.image_boxes = [wx.StaticBitmap(self.panel) for _ in range(self.rows*self.cols)]  
         for box in self.image_boxes:
             self.grid.Add(box, flag=wx.EXPAND)
         
         self.vbox = wx.BoxSizer(wx.VERTICAL)
         self.vbox.Add(self.grid, proportion=1, flag=wx.ALL | wx.EXPAND, border=10)
         
+        self.hbox = wx.BoxSizer(wx.HORIZONTAL)
+        self.hbox.Add(self.canvas1, 1, wx.EXPAND)
+        self.hbox.Add(self.canvas2, 1, wx.EXPAND)
+        
+        self.vbox.Add(self.hbox)
+        
         self.panel.SetSizer(self.vbox)
 
         self.Bind(wx.EVT_CLOSE, self.OnClose)
+        
+    def create_plot(self):
+        figure = Figure()
+        plot = figure.add_subplot(111)
+        return figure, plot
+    
+    def update_plot(self, losses):
+        self.plot1.clear()
+        self.plot1.plot(losses)
+        
+        #self.plot1.set_yscale('log')
+        self.plot1.set_xlabel('Epoch')
+        self.plot1.set_ylabel('Loss')
+        self.plot1.set_title('Losses (all)')
+        self.canvas1.draw()
+        
+        self.plot2.clear()
+        self.plot2.plot(losses[-1000:])
+        
+        self.plot2.set_xlabel('Epoch')
+        self.plot2.set_ylabel('Loss')
+        self.plot2.set_title('Losses (last 1k)')
+        self.canvas2.draw()
         
     def OnClose(self, event):
         # Do cleanup here, stop threads, release resources
@@ -157,17 +191,20 @@ def PIL_to_wxBitmap(pil_image):
 
 sc = None
 
-def show_images(frame, images, latent_vectors=None):
+def show_images(frame, idx_images, losses, latent_vectors=None):
     global sc
-    #img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)#.Scale(140, 140)  # Load and scale the image
-    for i, img in enumerate(images):
-        bitmap = PIL_to_wxBitmap(img)
-        frame.image_boxes[i].SetBitmap(bitmap)
+    frame.update_plot(losses)
     
-    tsne = TSNE(random_state=seed, n_components=2, perplexity=1, n_iter=300)
-    tsne_results = tsne.fit_transform(latent_vectors)
+    #img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)#.Scale(140, 140)  # Load and scale the image
+    for (idx, img) in idx_images:
+        bitmap = PIL_to_wxBitmap(img)
+        if idx >= 0 and idx < len(frame.image_boxes):
+            frame.image_boxes[idx].SetBitmap(bitmap)
     
     if latent_vectors is not None:
+        tsne = TSNE(random_state=seed, n_components=2, perplexity=1, n_iter=300)
+        tsne_results = tsne.fit_transform(latent_vectors)
+    
         if sc is not None:
             sc.remove()
         sc = plt.scatter(tsne_results[:, 0], tsne_results[:, 1])
@@ -321,7 +358,7 @@ def weights_init(m):
         nn.init.constant_(m.bias, 0)
 # Hyperparameters
 batch_size = 64
-learning_rate = 0.0001
+learning_rate = 0.001
 num_epochs = 1000000
 noise_factor = 0.25
 logging_interval = 10
@@ -329,7 +366,7 @@ logging_interval = 10
 width = 128
 height = width
 channels = 3
-depth = 512
+depth = 64
 model = VAE(width, height, channels, depth).to(device)
 model.apply(weights_init)
 
@@ -380,39 +417,20 @@ def vgg_preprocess(tensor):
     return (tensor - mean) / std
 
 # Training Loop
-def train_epoch(epoch, frame, batch, idx):
+def train_epoch(epoch, frame, batch, image_batch, idx, losses):
     model.train()
     
-    images = []
     tokenized_names = []
     target_size = (model.width, model.height)
     
     latent_vectors = None
     
-    for obj in batch:
-        img_path = get_filepath_for_object(obj, image_list)
-        if img_path is not None:
-            pil_image = Image.open(img_path)
-            pil_image = resize_with_padding(pil_image, target_size)
-            name = get_itemname_for_object(obj)
-            if name is not None:
-                if (pil_image.getbands() != 3):
-                    pil_image = pil_image.convert('RGB')
-                tensor_image = image_to_tensor(pil_image).to(device)
-                images.append(tensor_image)
-                tokens = tokenize_without_punctuation(name)
-                tokenized_names.append(tokens)
-                #print(name)
-                #print(tokens)
-    
     # Flatten the image
-    real_images = torch.stack(images).view(len(images), -1)
+    real_images = torch.stack(image_batch).view(len(image_batch), -1)
     
     batch_size = real_images.size(0)
     
     # Train model
-    #optimizer.zero_grad()
-    
     
     outputs, mu, log_var, z = model.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
     
@@ -420,6 +438,8 @@ def train_epoch(epoch, frame, batch, idx):
     
     # Loss
     recon_loss = F.binary_cross_entropy(outputs.view(batch_size,-1), real_images, reduction='sum')
+    #recon_loss = F.mse_loss(outputs.view(batch_size,-1), real_images)
+    #recon_loss = F.l1_loss(outputs.view(batch_size,-1), real_images)
     # KL divergence
     kld = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
     loss = recon_loss + kld
@@ -432,24 +452,30 @@ def train_epoch(epoch, frame, batch, idx):
     #loss.backward()
     #optimizer.step()
     
+    losses.append(loss.item())
     
     show_image_list = []
-
+    
+    
     if idx == 0 and (epoch + 1) % logging_interval == 0:
         with torch.no_grad():
             model.eval()
-            for img in real_images[:6]:
-                pil_image = tensor_to_image(img.view(3,target_size[0],target_size[1]).detach().cpu())
-                show_image_list.append(pil_image)
-                
-            for out in outputs[:6]:
+
+            
+            if epoch+1==logging_interval:
+                # First time only
+                for idx, img in enumerate(real_images[:frame.cols]):
+                    pil_image = tensor_to_image(img.view(3,target_size[0],target_size[1]).detach().cpu())
+                    show_image_list.append((idx, pil_image))
+            
+            for idx, out in enumerate(outputs[:frame.cols]):
                 pil_image = tensor_to_image(out.detach().cpu())
-                show_image_list.append(pil_image)
+                show_image_list.append((idx+frame.cols,pil_image))
             
             latent_start,mu,log_var = model.encode(real_images[0].view(-1,3,target_size[0], target_size[1]))
             latent_end,mu2, log_var2 = model.encode(real_images[4].view(-1,3,target_size[0], target_size[1]))
 
-            num_lerps = 6
+            num_lerps = frame.cols
             for i in range(num_lerps):
                 alpha = i / num_lerps
                 
@@ -457,23 +483,46 @@ def train_epoch(epoch, frame, batch, idx):
                 
                 out = model.decode(latent_lerp)[0]
                 pil_image = tensor_to_image(out.detach().cpu())
-                show_image_list.append(pil_image)
+                show_image_list.append((i+frame.cols*2,pil_image))
             
-        wx.CallAfter(show_images, frame, show_image_list) #, latent_vectors)
+        wx.CallAfter(show_images, frame, show_image_list, losses) #, latent_vectors)
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.12f}")
     
 
-def load_and_display_image(frame):
+def train(frame):
+
+    batch_size = 12
     
-    batch_size = 6
+    image_batch = []
+    target_size = (model.width, model.height)
+    
+    obj_batch = data[:batch_size]
+    
+    losses = []
+    
+    for obj in obj_batch:
+        img_path = get_filepath_for_object(obj, image_list)
+        if img_path is not None:
+            pil_image = Image.open(img_path)
+            pil_image = resize_with_padding(pil_image, target_size)
+            name = get_itemname_for_object(obj)
+            if name is not None:
+                if (pil_image.getbands() != 3):
+                    pil_image = pil_image.convert('RGB')
+                tensor_image = image_to_tensor(pil_image).to(device)
+                image_batch.append(tensor_image)
+                #tokens = tokenize_without_punctuation(name)
+                #tokenized_names.append(tokens)
+                
     for epoch in range(num_epochs):
-        for idx, batch in enumerate(batches(data, batch_size)):
-            train_epoch(epoch, frame, batch, idx)
-            break
+        #for idx, batch in enumerate(batches(data, batch_size)):
+        idx = 0
+        train_epoch(epoch, frame, obj_batch, image_batch, idx, losses)
+        #    break
 
 
 def start_loading(frame):
-    t = threading.Thread(target=load_and_display_image, args=(frame,))
+    t = threading.Thread(target=train, args=(frame,))
     t.daemon = True
 
     t.start()
