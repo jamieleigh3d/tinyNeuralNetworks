@@ -34,6 +34,7 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 #nltk.download('punkt')  # Download the necessary resource if not already downloaded
+#torch.autograd.set_detect_anomaly(True)
 
 device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using {device_string}")
@@ -335,12 +336,13 @@ class VAE(nn.Module):
     def encode(self, img):
         x = self.encoder(img)
         
-        x = x.view(x.size(0), -1)
+        #x = x.view(x.size(0), -1)
         
-        mu = self.fc_mu(x)
-        log_var = self.fc_log_var(x)
-        
-        z = self.reparameterize(mu, log_var)
+        #mu = self.fc_mu(x)
+        #log_var = self.fc_log_var(x)
+        mu=x
+        log_var=x
+        z = x#self.reparameterize(mu, log_var)
         return z, mu, log_var
         
     def decode(self, z): #, label, timestep):
@@ -350,8 +352,8 @@ class VAE(nn.Module):
         #l = self.label_emb(label)
         #l = l.unsqueeze(-1).unsqueeze(-1)
         #z = torch.cat([z, l, t], 1)
-        
-        x = self.decoder_input(z)
+        x = z
+        #x = self.decoder_input(z)
         x = x.view(x.size(0), self.depth, self.latent_width, self.latent_height)
         
         x = self.decoder(x)
@@ -436,7 +438,7 @@ batch_size = 64
 learning_rate = 0.001
 num_epochs = 1000000
 noise_factor = 0.25
-logging_interval = 100
+logging_interval = 10
 
 width = 128
 height = width
@@ -449,8 +451,8 @@ model.apply(weights_init)
 mse_loss = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-d_learning_rate = 0.0001
-d_depth = 32
+d_learning_rate = 0.005
+d_depth = 8
 discriminator = Discriminator(width, height, channels, d_depth).to(device)
 d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=d_learning_rate, betas=(0.5, 0.999))
 
@@ -518,7 +520,7 @@ def train_epoch(epoch, frame, batch, image_batch, idx, vae_losses, d_losses):
     
     outputs, mu, log_var, z = model.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
     
-    latent_vectors = mu.detach().cpu()
+    #latent_vectors = z.view(batch_size,-1).detach().cpu()
 
     # Loss
 
@@ -551,9 +553,19 @@ def train_epoch(epoch, frame, batch, image_batch, idx, vae_losses, d_losses):
     gen_real_or_fake = discriminator(outputs)
     g_loss = F.binary_cross_entropy(gen_real_or_fake, torch.ones_like(fake_validity))
 
+    #slerp_z = torch.zeros_like(z)
+    
+    #for i in range(batch_size):
+    #    next_i = (i+1)%batch_size #wrap around
+    #    slerp_z[i] = slerp(z[i], z[next_i], 0.5)
+    
+    #blended_outputs = model.decode(slerp_z)
+    #gen_real_or_fake2 = discriminator(blended_outputs)
+    #g2_loss = F.binary_cross_entropy(gen_real_or_fake2, torch.zeros_like(fake_validity))
+
     # Combine all losses (reconstruction, KL divergence, and GAN loss)
     
-    beta = min(warmup_epochs,epoch) / warmup_epochs
+    beta = 0#min(warmup_epochs,epoch) / warmup_epochs
     loss = recon_loss + kld * beta + g_loss
     
     # Backpropagation
@@ -580,6 +592,10 @@ def train_epoch(epoch, frame, batch, image_batch, idx, vae_losses, d_losses):
                 pil_image = tensor_to_image(out.detach().cpu())
                 show_image_list.append((idx+frame.cols,pil_image))
             
+            for idx, real_or_fake in enumerate(gen_real_or_fake.cpu()[:frame.cols]):
+                print(f"{idx}: {real_or_fake[0]:.2f} ",end="")
+            print()
+            
             latent_start,mu,log_var = model.encode(real_images[0].view(-1,3,target_size[0], target_size[1]))
             latent_end,mu2, log_var2 = model.encode(real_images[4].view(-1,3,target_size[0], target_size[1]))
 
@@ -591,12 +607,13 @@ def train_epoch(epoch, frame, batch, image_batch, idx, vae_losses, d_losses):
                 
                 out = model.decode(latent_lerp)[0]
                 pil_image = tensor_to_image(out.detach().cpu())
+                #pil_image = tensor_to_image(blended_outputs[i].detach().cpu())
                 show_image_list.append((i+frame.cols*2,pil_image))
             
-        wx.CallAfter(show_images, frame, show_image_list, vae_losses, d_losses) #, latent_vectors)
+        wx.CallAfter(show_images, frame, show_image_list, vae_losses, d_losses, latent_vectors)
     
     return loss.item(), d_loss.item()
-
+    
 def train(frame):
 
     batch_size = 12
