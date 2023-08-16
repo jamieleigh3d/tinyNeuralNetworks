@@ -150,22 +150,23 @@ class ImageLoaderFrame(wx.Frame):
         plot = figure.add_subplot(111)
         return figure, plot
     
-    def update_plot(self, vae_losses, d_losses):
+    def update_plot(self, total_losses, r_losses, kld_losses, d_losses):
         self.plot1.clear()
-        self.plot1.plot(vae_losses)
+        self.plot1.plot(r_losses)
+        self.plot1.plot(total_losses)
         
         #self.plot1.set_yscale('log')
         self.plot1.set_xlabel('Epoch')
         self.plot1.set_ylabel('Loss')
-        self.plot1.set_title('VAE Losses (all)')
+        self.plot1.set_title('Recon Losses')
         self.canvas1.draw()
         
         self.plot2.clear()
-        self.plot2.plot(vae_losses[-1000:])
+        self.plot2.plot(kld_losses)
         
         self.plot2.set_xlabel('Epoch')
         self.plot2.set_ylabel('Loss')
-        self.plot2.set_title('VAE Losses (last 1k)')
+        self.plot2.set_title('KLD Losses')
         self.canvas2.draw()        
         
         self.plot3.clear()
@@ -203,9 +204,9 @@ def PIL_to_wxBitmap(pil_image):
 
 sc = None
 
-def show_images(frame, idx_images, vae_losses, d_losses, latent_vectors=None):
+def show_images(frame, idx_images, total_losses, r_losses, kld_losses, d_losses, latent_vectors=None):
     global sc
-    frame.update_plot(vae_losses, d_losses)
+    frame.update_plot(total_losses, r_losses, kld_losses, d_losses)
     
     #img = wx.Image(img_path, wx.BITMAP_TYPE_ANY)#.Scale(140, 140)  # Load and scale the image
     for (idx, img) in idx_images:
@@ -323,9 +324,11 @@ class VAE(nn.Module):
         if debug:
             print(img.shape)
         
-        z, mu, log_var = self.encode(img)
+        mu, log_var = self.encode(img)
         if debug:
             print(z.shape)
+        
+        z = self.reparameterize(mu, log_var)
         
         x = self.decode(z)
         if debug:
@@ -336,14 +339,11 @@ class VAE(nn.Module):
     def encode(self, img):
         x = self.encoder(img)
         
-        #x = x.view(x.size(0), -1)
+        x = x.view(x.size(0), -1)
+        mu = self.fc_mu(x)
+        log_var = self.fc_log_var(x)
         
-        #mu = self.fc_mu(x)
-        #log_var = self.fc_log_var(x)
-        mu=x
-        log_var=x
-        z = x#self.reparameterize(mu, log_var)
-        return z, mu, log_var
+        return mu, log_var
         
     def decode(self, z): #, label, timestep):
         #t = self.timestep_emb(timestep)
@@ -352,8 +352,9 @@ class VAE(nn.Module):
         #l = self.label_emb(label)
         #l = l.unsqueeze(-1).unsqueeze(-1)
         #z = torch.cat([z, l, t], 1)
-        x = z
-        #x = self.decoder_input(z)
+        #x = z
+        
+        x = self.decoder_input(z)
         x = x.view(x.size(0), self.depth, self.latent_width, self.latent_height)
         
         x = self.decoder(x)
@@ -443,7 +444,7 @@ logging_interval = 10
 width = 128
 height = width
 channels = 3
-depth = 32
+depth = 128
 model = VAE(width, height, channels, depth).to(device)
 model.apply(weights_init)
 
@@ -451,7 +452,7 @@ model.apply(weights_init)
 mse_loss = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-d_learning_rate = 0.005
+d_learning_rate = 0.0005
 d_depth = 8
 discriminator = Discriminator(width, height, channels, d_depth).to(device)
 d_optimizer = torch.optim.Adam(discriminator.parameters(), lr=d_learning_rate, betas=(0.5, 0.999))
@@ -498,11 +499,10 @@ def vgg_preprocess(tensor):
     
     return (tensor - mean) / std
 
-beta = 0
-warmup_epochs = 1
+beta_warmup_epochs = 500
 
 # Training Loop
-def train_epoch(epoch, frame, batch, image_batch, idx, vae_losses, d_losses):
+def train_epoch(epoch, frame, batch, real_images, idx):
     model.train()
     discriminator.train()
     
@@ -511,14 +511,13 @@ def train_epoch(epoch, frame, batch, image_batch, idx, vae_losses, d_losses):
     
     latent_vectors = None
     
-    # Flatten the image
-    real_images = torch.stack(image_batch).view(len(image_batch), -1)
-    
     batch_size = real_images.size(0)
     
     # Train model
     
     outputs, mu, log_var, z = model.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
+    
+    display_outputs = model.decode(mu)
     
     #latent_vectors = z.view(batch_size,-1).detach().cpu()
 
@@ -527,31 +526,33 @@ def train_epoch(epoch, frame, batch, image_batch, idx, vae_losses, d_losses):
     recon_loss = F.binary_cross_entropy(outputs.view(batch_size,-1), real_images, reduction='sum')
     #recon_loss = F.mse_loss(outputs.view(batch_size,-1), real_images)
     #recon_loss = F.l1_loss(outputs.view(batch_size,-1), real_images)
+    
+    recon_factor = 1.0 #/ (width * height * channels)
+    
     # KL divergence
     kld = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
     
-    # Train Discriminator
-    # Real images
-    real_validity = discriminator(real_images.view(batch_size,3,target_size[0],target_size[1]))
-    real_loss = F.binary_cross_entropy(real_validity, torch.ones_like(real_validity))
+    if False:
+        # Train Discriminator
+        # Real images
+        real_validity = discriminator(real_images.view(batch_size,3,target_size[0],target_size[1]))
+        real_loss = F.binary_cross_entropy(real_validity, torch.ones_like(real_validity))
 
-    # Reconstructed images
-    fake_validity = discriminator(outputs.detach())
-    fake_loss = F.binary_cross_entropy(fake_validity, torch.zeros_like(fake_validity))
+        # Reconstructed images
+        fake_validity = discriminator(outputs.detach())
+        fake_loss = F.binary_cross_entropy(fake_validity, torch.zeros_like(fake_validity))
 
-    d_loss = (real_loss + fake_loss) / 2
+        d_loss = (real_loss + fake_loss) / 2
 
-    d_optimizer.zero_grad()
-    d_loss.backward()
-    d_optimizer.step()
+        d_optimizer.zero_grad()
+        d_loss.backward()
+        d_optimizer.step()
     
-    d_losses.append(d_loss.item())
-    
-    # Train Generator (VAE) with respect to Discriminator's output
-    # For the generator, we want the discriminator to 
-    # believe that the generated/reconstructed images are real
-    gen_real_or_fake = discriminator(outputs)
-    g_loss = F.binary_cross_entropy(gen_real_or_fake, torch.ones_like(fake_validity))
+        # Train Generator (VAE) with respect to Discriminator's output
+        # For the generator, we want the discriminator to 
+        # believe that the generated/reconstructed images are real
+        gen_real_or_fake = discriminator(outputs)
+        g_loss = F.binary_cross_entropy(gen_real_or_fake, torch.ones_like(fake_validity))
 
     #slerp_z = torch.zeros_like(z)
     
@@ -565,66 +566,31 @@ def train_epoch(epoch, frame, batch, image_batch, idx, vae_losses, d_losses):
 
     # Combine all losses (reconstruction, KL divergence, and GAN loss)
     
-    beta = 0#min(warmup_epochs,epoch) / warmup_epochs
-    loss = recon_loss + kld * beta + g_loss
+    beta = 0.5*min(beta_warmup_epochs,epoch) / beta_warmup_epochs
+    r_term = recon_loss*recon_factor
+    kld_term = kld * beta
+    loss = r_term + kld_term #+ g_loss
     
     # Backpropagation
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
     
-    vae_losses.append(loss.item())
-    
-    show_image_list = []
-    
-    if idx == 0 and (epoch + 1) % logging_interval == 0:
-        with torch.no_grad():
-            model.eval()
-
-            
-            if epoch+1==logging_interval:
-                # First time only
-                for idx, img in enumerate(real_images[:frame.cols]):
-                    pil_image = tensor_to_image(img.view(3,target_size[0],target_size[1]).detach().cpu())
-                    show_image_list.append((idx, pil_image))
-            
-            for idx, out in enumerate(outputs[:frame.cols]):
-                pil_image = tensor_to_image(out.detach().cpu())
-                show_image_list.append((idx+frame.cols,pil_image))
-            
-            for idx, real_or_fake in enumerate(gen_real_or_fake.cpu()[:frame.cols]):
-                print(f"{idx}: {real_or_fake[0]:.2f} ",end="")
-            print()
-            
-            latent_start,mu,log_var = model.encode(real_images[0].view(-1,3,target_size[0], target_size[1]))
-            latent_end,mu2, log_var2 = model.encode(real_images[4].view(-1,3,target_size[0], target_size[1]))
-
-            num_lerps = frame.cols
-            for i in range(num_lerps):
-                alpha = i / num_lerps
-                
-                latent_lerp = slerp(latent_start, latent_end, alpha)
-                
-                out = model.decode(latent_lerp)[0]
-                pil_image = tensor_to_image(out.detach().cpu())
-                #pil_image = tensor_to_image(blended_outputs[i].detach().cpu())
-                show_image_list.append((i+frame.cols*2,pil_image))
-            
-        wx.CallAfter(show_images, frame, show_image_list, vae_losses, d_losses, latent_vectors)
-    
-    return loss.item(), d_loss.item()
+    return display_outputs, r_term.item(), kld_term.item()
     
 def train(frame):
 
-    batch_size = 12
-    save_enabled = False
+    batch_size = 128
+    save_enabled = True
     
     image_batch = []
     target_size = (model.width, model.height)
     
     obj_batch = data[:batch_size]
     
-    vae_losses = []
+    total_losses = []
+    r_losses = []
+    kld_losses = []
     d_losses = []
     
     for obj in obj_batch:
@@ -641,20 +607,62 @@ def train(frame):
                 #tokens = tokenize_without_punctuation(name)
                 #tokenized_names.append(tokens)
     
-    lowest_loss = None    
+    # Flatten the image
+    real_images = torch.stack(image_batch).view(len(image_batch), -1)
+    
+    lowest_loss = None
     #last_epoch = model.load("vae_checkpoint.pth", optimizer)
     for epoch in range(num_epochs):
         #for idx, batch in enumerate(batches(data, batch_size)):
         idx = 0
-        loss,d_loss = train_epoch(epoch, frame, obj_batch, image_batch, idx, vae_losses, d_losses)
+        outputs,r_term,kld_term = train_epoch(epoch, frame, obj_batch, real_images, idx)
+        total_loss = r_term + kld_term
+        total_losses.append(total_loss)
+        r_losses.append(r_term)
+        kld_losses.append(kld_term)
         
         if (epoch+1) % logging_interval == 0:
-            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss:.8f}, Disc. Loss: {d_loss:.8f}")
+            print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {total_loss:.8f}, R_Loss: {r_term:.8f}, KLD Loss: {kld_term:.8f}")
+            
+            show_image_list = []
+    
+            with torch.no_grad():
+                model.eval()
+                if epoch+1==logging_interval:
+                    # First time only
+                    for idx, img in enumerate(real_images[:frame.cols]):
+                        pil_image = tensor_to_image(img.view(3,target_size[0],target_size[1]).detach().cpu())
+                        show_image_list.append((idx, pil_image))
+                
+                for idx, out in enumerate(outputs[:frame.cols]):
+                    pil_image = tensor_to_image(out.detach().cpu())
+                    show_image_list.append((idx+frame.cols,pil_image))
+                
+                #for idx, real_or_fake in enumerate(gen_real_or_fake.cpu()[:frame.cols]):
+                #    print(f"{idx}: {real_or_fake[0]:.2f} ",end="")
+                #print()
+                
+                mu,log_var = model.encode(real_images[0].view(-1,3,target_size[0], target_size[1]))
+                mu2, log_var2 = model.encode(real_images[5].view(-1,3,target_size[0], target_size[1]))
+
+                num_lerps = frame.cols
+                for i in range(num_lerps):
+                    alpha = i / num_lerps
+                    
+                    latent_lerp = slerp(mu, mu2, alpha)
+                    
+                    out = model.decode(latent_lerp)[0]
+                    pil_image = tensor_to_image(out.detach().cpu())
+                    #pil_image = tensor_to_image(blended_outputs[i].detach().cpu())
+                    show_image_list.append((i+frame.cols*2,pil_image))
+                
+            
+            wx.CallAfter(show_images, frame, show_image_list, total_losses, r_losses, kld_losses, d_losses)#, latent_vectors)
             if save_enabled:
                 if lowest_loss is None:
-                    lowest_loss = loss+1
-                if loss < lowest_loss:
-                    lowest_loss = loss
+                    lowest_loss = total_loss+1
+                if total_loss < lowest_loss:
+                    lowest_loss = total_loss
                     model.save("vae_checkpoint.pth", optimizer, epoch)
 
 
