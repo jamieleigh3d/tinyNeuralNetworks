@@ -41,8 +41,6 @@ transform = transforms.Compose([
 ])
 
 train_dataset = datasets.MNIST(root='./data', train=True, transform=transform, download=True)
-print(train_dataset)
-exit()
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True)
 
 # Define the Generator Model
