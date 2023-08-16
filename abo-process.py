@@ -347,6 +347,45 @@ class VAE(nn.Module):
         
         return x
         
+    def save(self, filepath, optimizer, epoch):
+        """
+        Save the model's parameters and additional training-related information to a file.
+        
+        Args:
+            filepath (str): The path to the file where the model's parameters should be saved.
+            optimizer (torch.optim.Optimizer): The optimizer used for training.
+            epoch (int): The current epoch number.
+        """
+        checkpoint = {
+            'model_state_dict': self.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'epoch': epoch
+        }
+        torch.save(checkpoint, filepath)
+        print(f'Checkpoint saved to {filepath}')
+
+    def load(self, filepath, optimizer=None):
+        """
+        Load the model's parameters and additional training-related information from a file.
+        
+        Args:
+            filepath (str): The path to the file from which the model's parameters should be loaded.
+            optimizer (torch.optim.Optimizer, optional): The optimizer used for training. If provided, its state will be updated.
+        
+        Returns:
+            int: The last saved epoch number.
+        """
+        checkpoint = torch.load(filepath, map_location='cpu')
+        self.load_state_dict(checkpoint['model_state_dict'])
+        
+        if optimizer:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        epoch = checkpoint['epoch']
+        
+        print(f'Checkpoint loaded from {filepath} at epoch {epoch}')
+        return epoch
+        
         
 def weights_init(m):
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
@@ -361,12 +400,12 @@ batch_size = 64
 learning_rate = 0.001
 num_epochs = 1000000
 noise_factor = 0.25
-logging_interval = 10
+logging_interval = 100
 
 width = 128
 height = width
 channels = 3
-depth = 64
+depth = 32
 model = VAE(width, height, channels, depth).to(device)
 model.apply(weights_init)
 
@@ -486,12 +525,12 @@ def train_epoch(epoch, frame, batch, image_batch, idx, losses):
                 show_image_list.append((i+frame.cols*2,pil_image))
             
         wx.CallAfter(show_images, frame, show_image_list, losses) #, latent_vectors)
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.12f}")
     
+    return loss.item()
 
 def train(frame):
 
-    batch_size = 12
+    batch_size = 128
     
     image_batch = []
     target_size = (model.width, model.height)
@@ -513,12 +552,22 @@ def train(frame):
                 image_batch.append(tensor_image)
                 #tokens = tokenize_without_punctuation(name)
                 #tokenized_names.append(tokens)
-                
+    
+    lowest_loss = None
+    #last_epoch = model.load("vae_checkpoint.pth", optimizer)
     for epoch in range(num_epochs):
         #for idx, batch in enumerate(batches(data, batch_size)):
         idx = 0
-        train_epoch(epoch, frame, obj_batch, image_batch, idx, losses)
-        #    break
+        loss = train_epoch(epoch, frame, obj_batch, image_batch, idx, losses)
+        
+        if (epoch+1) % logging_interval == 0:
+            if lowest_loss is None:
+                lowest_loss = loss+1
+            if loss < lowest_loss:
+                lowest_loss = loss
+                model.save("vae_checkpoint.pth", optimizer, epoch)
+            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss:.12f}")
+
 
 
 def start_loading(frame):
