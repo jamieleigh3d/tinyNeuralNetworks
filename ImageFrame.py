@@ -1,5 +1,5 @@
 import wx
-
+from sklearn.manifold import TSNE
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
