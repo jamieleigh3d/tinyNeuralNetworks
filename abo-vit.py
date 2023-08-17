@@ -165,16 +165,26 @@ def train(frame, device):
     num_epochs = 20000
     logging_interval = 1
 
-    img_size = 128
-    channels = 3
-    emb_size = 64
-    model = vitae.ViTAE(device,
+    img_size=128
+    channels=3
+    emb_size=64
+    num_layers=4
+    num_heads=2
+    patch_count=8
+    patch_size=img_size//patch_count
+    mlp_dim=16
+    
+    model = vitae.ViTAE(
         img_size = img_size, 
         channels = channels, 
-        emb_size = emb_size).to(device)
-    print(model)
-    #wx.CallAfter(frame.Close)
-    #exit()
+        emb_size = emb_size,
+        num_layers = num_layers,
+        num_heads = num_heads,
+        patch_size = patch_size,
+        mlp_dim = mlp_dim
+    ).to(device)
+    
+    
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
 
@@ -294,12 +304,45 @@ def start_training_thread(frame,device):
     t.start()
     return t
 
+def test_model():
+    
+    img_size=64
+    channels=3
+    emb_size=32
+    num_layers=4
+    num_heads=2
+    patch_count=8
+    patch_size=img_size//patch_count
+    mlp_dim=16
+    
+    model = vitae.ViTAE(
+        img_size = img_size, 
+        channels = channels, 
+        emb_size = emb_size,
+        num_layers = num_layers,
+        num_heads = num_heads,
+        patch_size = patch_size,
+        mlp_dim = mlp_dim
+    )
+    
+    img = torch.randn(10, channels, img_size, img_size)
+    print(f"img: {img.shape}")
+    
+    out,z = model(img) # (10, channels, img_size, img_size)
+    print(f"z: {z.shape}")
+    print(f"out: {out.shape}")
+    
+    print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
+    del model
+
 if __name__ == "__main__":
 
 
     device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using {device_string}")
     device = torch.device(device_string)
+    
+    test_model()
     
     show_ui = True
     

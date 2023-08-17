@@ -7,7 +7,7 @@ import vit_pytorch
 from vit_pytorch.extractor import Extractor
 
 class ViTAE(nn.Module):
-    def __init__(self, device, img_size=64, channels=3, emb_size=32, num_layers=2, num_heads=2, patch_size=8, mlp_dim=16):
+    def __init__(self, img_size=64, channels=3, emb_size=32, num_layers=1, num_heads=1, patch_size=8, mlp_dim=16):
         super(ViTAE, self).__init__()
         
         self.channels = channels
@@ -63,7 +63,7 @@ class ViTAE(nn.Module):
             heads = num_heads, 
             dim_head = 64, 
             mlp_dim = 64,
-        ).to(device)
+        )
         
         self.mlp_head = nn.Linear(transform_size, channels*img_size*img_size)
     
@@ -75,7 +75,11 @@ class ViTAE(nn.Module):
 
     
     def forward(self, img):
-        
+    
+        assert len(img.shape) == 4, f"Expected img to have 4 dimensions, found {len(img.shape)}"
+        assert self.channels == img.shape[1], 'Image channels (shape[1]) must match ViTAE channels.'
+        assert self.img_height == img.shape[2] and self.img_width == img.shape[3], 'Image dimensions (shape[2] and shape[3]) must match ViTAE dimensions.'
+
         z = self.encode(img)
         
         x = self.decode(z)
@@ -86,10 +90,9 @@ class ViTAE(nn.Module):
         #z = self.encoder(img)
         
         device = img.device
-
         x = self.to_patch_embedding(img)
         x += self.pos_embedding.to(device, dtype=x.dtype)
-
+        
         z = self.encoder(x)
         z = z.mean(dim = 1)
 
