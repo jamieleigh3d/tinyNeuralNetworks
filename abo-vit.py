@@ -22,6 +22,7 @@ from ImageFrame import ImageLossFrame
 import vae
 import abo as abo
 import torch_utils as utils
+import vitae
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -56,15 +57,6 @@ def resize_with_padding(pil_image, target_size):
 
     return padded_image
 
-def weights_init(m):
-    if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
-        if m.bias is not None:
-            nn.init.constant_(m.bias, 0)
-    elif isinstance(m, nn.Linear):
-        nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu')
-        nn.init.constant_(m.bias, 0)
-
 # Define a perceptual loss function using feature extractor
 class PerceptualLoss(nn.Module):
     def __init__(self, feature_extractor):
@@ -93,7 +85,7 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     model.train()
     
     tokenized_names = []
-    target_size = (model.width, model.height)
+    img_size = model.img_size
     
     latent_vectors = None
     
@@ -101,9 +93,9 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     
     # Train model
     
-    outputs, mu, log_var, z = model.forward(real_images.view(batch_size,3,target_size[0],target_size[1]))
+    outputs, z = model.forward(real_images.view(batch_size,3,img_size,img_size))
     
-    display_outputs = model.decode(mu)
+    display_outputs = outputs
     
     #latent_vectors = z.view(batch_size,-1).detach().cpu()
 
@@ -114,37 +106,30 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     #recon_loss = F.l1_loss(outputs.view(batch_size,-1), real_images)
     
     # Compute perceptual loss
-    p_loss = perceptual_loss(outputs, real_images.view(batch_size, 3, model.width, model.height))
-    
-    # KL divergence
-    kld = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+    p_loss = perceptual_loss(outputs, real_images.view(batch_size, 3, img_size, img_size))
     
     # Combine all losses (reconstruction, KL divergence, and GAN loss)
 
-    recon_factor = 1.0 #/ (model.width * model.height * model.channels)
+    recon_factor = 1.0 / batch_size #/ (model.img_size * model.img_size * model.channels)
     r_term = recon_loss*recon_factor
     
     beta_warmup_epochs = 500
     kld_factor = 1.0*min(beta_warmup_epochs,epoch) / beta_warmup_epochs
-    kld_term = kld * kld_factor
     
-    p_factor = 0.0
+    
+    p_factor = 1.0
     p_term = p_loss * p_factor
     
-    total_loss = r_term + kld_term + p_term #+ g_loss
+    total_loss = r_term + p_term #+ g_loss
     
     # Backpropagation
     optimizer.zero_grad()
     total_loss.backward()
     optimizer.step()
     
-    return display_outputs, total_loss.item(), r_term.item(), kld_term.item(), p_term.item()
+    return display_outputs, total_loss.item(), r_term.item(), 0, p_term.item()
     
-def train(frame):
-
-    device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Using {device_string}")
-    device = torch.device(device_string)
+def train(frame, device):
 
     batch_size = 12
     save_enabled = False
@@ -154,14 +139,15 @@ def train(frame):
     learning_rate = 0.001
     num_epochs = 1000000
     noise_factor = 0.25
-    logging_interval = 10
+    logging_interval = 5
 
-    width = 64
-    height = width
+    img_size = 64
     channels = 3
-    depth = 64
-    model = vae.VAE(width, height, channels, depth).to(device)
-    model.apply(weights_init)
+    emb_size = 64
+    model = vitae.ViTAE(device,
+        img_size = img_size, 
+        channels = channels, 
+        emb_size = emb_size).to(device)
 
     # Loss and Optimizer
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
@@ -176,7 +162,6 @@ def train(frame):
 
     
     image_batch = []
-    target_size = (model.width, model.height)
     
     obj_data = abo.load_objects()
     image_list = abo.load_images()
@@ -192,7 +177,7 @@ def train(frame):
         img_path = abo.get_filepath_for_object(obj, image_list)
         if img_path is not None:
             pil_image = PILImage.open(img_path)
-            pil_image = resize_with_padding(pil_image, target_size)
+            pil_image = resize_with_padding(pil_image, (img_size,img_size))
             name = abo.get_itemname_for_object(obj)
             if name is not None:
                 if (pil_image.getbands() != 3):
@@ -220,7 +205,7 @@ def train(frame):
             return
         
         if (epoch+1) % logging_interval == 0:
-            print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {total_loss:.8f}, R_Loss: {r_term:.8f}, KLD Loss: {kld_term:.8f}, Perceptual Loss: {p_term:.8f}")
+            print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {total_loss:.4f}, R_Loss: {r_term:.4f}, KLD Loss: {kld_term:.4f}, Perceptual Loss: {p_term:.4f}")
             
             show_image_list = []
     
@@ -229,21 +214,21 @@ def train(frame):
                 if epoch+1==logging_interval:
                     # First time only
                     for idx, img in enumerate(real_images[:frame.cols]):
-                        pil_image = utils.tensor_to_image(img.view(3,target_size[0],target_size[1]).detach().cpu())
+                        pil_image = utils.tensor_to_image(img.view(3,img_size,img_size).detach().cpu())
                         show_image_list.append((idx, pil_image))
                 
                 for idx, out in enumerate(outputs[:frame.cols]):
                     pil_image = utils.tensor_to_image(out.detach().cpu())
                     show_image_list.append((idx+frame.cols,pil_image))
                 
-                mu,log_var = model.encode(real_images[0].view(-1,3,target_size[0], target_size[1]))
-                mu2, log_var2 = model.encode(real_images[5].view(-1,3,target_size[0], target_size[1]))
+                z = model.encode(real_images[0].view(-1,3,img_size, img_size))
+                z2 = model.encode(real_images[4].view(-1,3,img_size, img_size))
 
                 num_lerps = frame.cols
                 for i in range(num_lerps):
                     alpha = i / num_lerps
                     
-                    latent_lerp = utils.slerp(mu, mu2, alpha)
+                    latent_lerp = utils.slerp(z, z2, alpha)
                     
                     out = model.decode(latent_lerp)[0]
                     pil_image = utils.tensor_to_image(out.detach().cpu())
@@ -258,8 +243,8 @@ def train(frame):
                     lowest_loss = total_loss
                     model.save("vae_checkpoint.pth", optimizer, epoch)
 
-def start_training_thread(frame):
-    t = threading.Thread(target=train, args=(frame,))
+def start_training_thread(frame,device):
+    t = threading.Thread(target=train, args=(frame,device,))
     t.daemon = True
 
     t.start()
@@ -267,13 +252,28 @@ def start_training_thread(frame):
 
 if __name__ == "__main__":
 
+
+    device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Using {device_string}")
+    device = torch.device(device_string)
+
+    v = vitae.ViTAE(device).to(device)
+    
+    img = torch.randn(10, 3, 64, 64).to(device)
+
+    out,z = v(img) # (1, 1000)
+    
+    print(f"out: {out.shape}")
+    print(f"z: {z.shape}")
+    
+
     seed = 42
     utils.seed_everywhere(seed)
     
     app = wx.App(False)
     frame = ImageLossFrame(None, 'Image Processing GUI')
     frame.Show()
-    frame.thread = start_training_thread(frame)
+    frame.thread = start_training_thread(frame, device)
     
     app.MainLoop()
     
