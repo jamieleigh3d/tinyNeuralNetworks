@@ -10,6 +10,7 @@ import torchvision
 import torchvision.models as tvm
 import random
 from PIL import Image as PILImage
+from tqdm import tqdm, trange
 
 import nltk
 from nltk.tokenize import WhitespaceTokenizer
@@ -129,51 +130,13 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     
     return display_outputs, total_loss.item(), r_term.item(), 0, p_term.item(), latent_vectors
     
-def train(frame, device):
-
-    batch_size = 12
-    save_enabled = False
-    
-    # Hyperparameters
-    learning_rate = 0.001
-    num_epochs = 1000000
-    noise_factor = 0.25
-    logging_interval = 100
-
-    img_size = 64
-    channels = 3
-    emb_size = 64
-    model = vitae.ViTAE(device,
-        img_size = img_size, 
-        channels = channels, 
-        emb_size = emb_size).to(device)
-
-    # Loss and Optimizer
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-    # Load a pretrained feature extractor (e.g., VGG16)
-    feature_extractor = tvm.vgg16(weights=tvm.VGG16_Weights.IMAGENET1K_FEATURES).features.to(device)
-    feature_extractor.eval()
-    for param in feature_extractor.parameters():
-        param.requires_grad = False
-
-    perceptual_loss = PerceptualLoss(feature_extractor)
-
-    
+def preprocess_image_batch(obj_batch, image_metadata, img_size):
     image_batch = []
     
-    obj_data = abo.load_objects()
-    image_list = abo.load_images()
-    
-    obj_batch = obj_data[:batch_size]
-    
-    total_losses = []
-    r_losses = []
-    kld_losses = []
-    d_losses = []
+    # Load and preprocess the images for the objects into tensors
     
     for obj in obj_batch:
-        img_path = abo.get_filepath_for_object(obj, image_list)
+        img_path = abo.get_filepath_for_object(obj, image_metadata)
         if img_path is not None:
             pil_image = PILImage.open(img_path)
             pil_image = resize_with_padding(pil_image, (img_size,img_size))
@@ -188,64 +151,115 @@ def train(frame, device):
     
     # Flatten the image
     real_images = torch.stack(image_batch).view(len(image_batch), -1)
+    return real_images
+    
+def train(frame, device):
+
+    batch_size = 32
+    save_enabled = True
+    
+    # Hyperparameters
+    learning_rate = 0.001
+    num_epochs = 1000000
+    logging_interval = 1
+
+    img_size = 128
+    channels = 3
+    emb_size = 16
+    model = vitae.ViTAE(device,
+        img_size = img_size, 
+        channels = channels, 
+        emb_size = emb_size).to(device)
+    #print(model)
+    print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
+    
+
+    # Loss and Optimizer
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+    # Load a pretrained feature extractor (e.g., VGG16)
+    feature_extractor = tvm.vgg16(weights=tvm.VGG16_Weights.IMAGENET1K_FEATURES).features.to(device)
+    feature_extractor.eval()
+    for param in feature_extractor.parameters():
+        param.requires_grad = False
+
+    perceptual_loss = PerceptualLoss(feature_extractor)
+
+    
+    obj_data = abo.load_objects()
+    image_metadata = abo.load_images()
+    
+    print(f"Num objects: {len(obj_data)}")
+    print(f"Num images: {len(image_metadata)}")
+    print(f"Batch size: {batch_size}")
+    
+    total_losses = []
+    r_losses = []
+    kld_losses = []
+    d_losses = []
+    
     
     target_idx = 0
     
     lowest_loss = None
     #last_epoch = model.load("vae_checkpoint.pth", optimizer)
-    for epoch in range(num_epochs):
-        #for idx, batch in enumerate(batches(data, batch_size)):
-        idx = 0
-        outputs,total_loss,r_term,kld_term,p_term,latent_vectors = train_epoch(model, perceptual_loss, optimizer, epoch, frame, obj_batch, real_images, idx)
-        total_losses.append(total_loss)
-        r_losses.append(r_term)
-        kld_losses.append(kld_term)
-        d_losses.append(p_term)
-        
-        if frame is not None and frame.done:
-            return
-        
-        if (epoch+1) % logging_interval == 0:
-            print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {total_loss:.4f}, R_Loss: {r_term:.4f}, KLD Loss: {kld_term:.4f}, Perceptual Loss: {p_term:.4f}")
+    for epoch in trange(num_epochs, desc="Training"):
+        for idx, obj_batch in tqdm(enumerate(utils.batches(obj_data, batch_size)), leave=False):
             
-            show_image_list = []
-    
-            with torch.no_grad():
-                model.eval()
-                if epoch+1==logging_interval:
-                    # First time only
-                    for idx, img in enumerate(real_images[:frame.cols]):
-                        pil_image = utils.tensor_to_image(img.view(3,img_size,img_size).detach().cpu())
-                        show_image_list.append((idx, pil_image))
+            real_images = preprocess_image_batch(obj_batch, image_metadata, img_size)
+            
+            outputs,total_loss,r_term,kld_term,p_term,latent_vectors = train_epoch(model, perceptual_loss, optimizer, epoch, frame, obj_batch, real_images, idx)
+            total_losses.append(total_loss)
+            r_losses.append(r_term)
+            kld_losses.append(kld_term)
+            d_losses.append(p_term)
+            
+            if frame is not None and frame.done:
+                return
+            
+            if (epoch+1) % logging_interval == 0:
+                #print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {total_loss:.4f}, R_Loss: {r_term:.4f}, KLD Loss: {kld_term:.4f}, Perceptual Loss: {p_term:.4f}")
                 
-                for idx, out in enumerate(outputs[:frame.cols]):
-                    pil_image = utils.tensor_to_image(out.detach().cpu())
-                    show_image_list.append((idx+frame.cols,pil_image))
-                
-                z = model.encode(real_images[0].view(-1,3,img_size, img_size))
-                z2 = model.encode(real_images[target_idx].view(-1,3,img_size, img_size))
-                
-                # change the interp target each time
-                target_idx = (target_idx + 1) % frame.cols
+                show_image_list = []
+        
+                # First batch only
+                if idx==0:
+                    with torch.no_grad():
+                        model.eval()
+                        # First time only
+                        if (epoch+1) == logging_interval:
+                            for idx, img in enumerate(real_images[:frame.cols]):
+                                pil_image = utils.tensor_to_image(img.view(3,img_size,img_size).detach().cpu())
+                                show_image_list.append((idx, pil_image))
+                        
+                        for idx, out in enumerate(outputs[:frame.cols]):
+                            pil_image = utils.tensor_to_image(out.detach().cpu())
+                            show_image_list.append((idx+frame.cols,pil_image))
+                        
+                        z = model.encode(real_images[0].view(-1,3,img_size, img_size))
+                        z2 = model.encode(real_images[target_idx].view(-1,3,img_size, img_size))
+                        
+                        # change the interp target each time
+                        target_idx = (target_idx + 1) % frame.cols
 
-                num_lerps = frame.cols
-                for i in range(num_lerps):
-                    alpha = i / num_lerps
+                        num_lerps = frame.cols
+                        for i in range(num_lerps):
+                            alpha = i / num_lerps
+                            
+                            latent_lerp = utils.slerp(z, z2, alpha)
+                            
+                            out = model.decode(latent_lerp)[0]
+                            pil_image = utils.tensor_to_image(out.detach().cpu())
+                            show_image_list.append((i+frame.cols*2,pil_image))
+                        
                     
-                    latent_lerp = utils.slerp(z, z2, alpha)
-                    
-                    out = model.decode(latent_lerp)[0]
-                    pil_image = utils.tensor_to_image(out.detach().cpu())
-                    show_image_list.append((i+frame.cols*2,pil_image))
-                
-            
-            wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, kld_losses, d_losses, latent_vectors)
-            if save_enabled:
-                if lowest_loss is None:
-                    lowest_loss = total_loss+1
-                if total_loss < lowest_loss:
-                    lowest_loss = total_loss
-                    model.save("vae_checkpoint.pth", optimizer, epoch)
+                    wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, kld_losses, d_losses, latent_vectors)
+                    if save_enabled:
+                        if lowest_loss is None:
+                            lowest_loss = total_loss+1
+                        if total_loss < lowest_loss:
+                            lowest_loss = total_loss
+                            model.save("vae_checkpoint.pth", optimizer, epoch)
 
 def start_training_thread(frame,device):
     t = threading.Thread(target=train, args=(frame,device,))

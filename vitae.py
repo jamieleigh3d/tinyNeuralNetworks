@@ -35,11 +35,18 @@ class ViTAE(nn.Module):
             depth = num_layers, 
             heads = num_heads, 
             dim_head = 64, 
-            mlp_dim = mlp_dim,
+            mlp_dim = 64,
         ).to(device)
         
         self.mlp_head = nn.Linear(transform_size, channels*img_size*img_size)
-        
+    
+    def learnable_params(self):
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def total_params(self):
+        return sum(p.numel() for p in self.parameters())
+
+    
     def forward(self, img):
         
         z = self.encode(img)
@@ -83,7 +90,7 @@ class ViTAE(nn.Module):
             'epoch': epoch
         }
         torch.save(checkpoint, filepath)
-        print(f'Checkpoint saved to {filepath}')
+        #print(f'Checkpoint saved to {filepath}')
 
     def load(self, filepath, optimizer=None):
         """
@@ -104,5 +111,5 @@ class ViTAE(nn.Module):
         
         epoch = checkpoint['epoch']
         
-        print(f'Checkpoint loaded from {filepath} at epoch {epoch}')
+        #print(f'Checkpoint loaded from {filepath} at epoch {epoch}')
         return epoch

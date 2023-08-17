@@ -24,6 +24,11 @@ def image_to_tensor(img):
 def tensor_to_image(tensor_img):
     """Convert a PyTorch tensor to a PIL image."""
     tensor_img = tensor_img.permute(1, 2, 0)  # Change dimensions to (H, W, C)
+    
+    # Check for NaN or Inf values and replace with 0
+    tensor_img[tensor_img != tensor_img] = 0  # Replaces NaN values with 0
+    tensor_img[torch.isinf(tensor_img)] = 0   # Replaces Inf values with 0
+
     np_img = np.clip((tensor_img.numpy() * 255), 0, 255).astype(np.uint8)  # Convert tensor to [0, 255] range
     return PILImage.fromarray(np_img)
 
