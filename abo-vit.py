@@ -156,21 +156,24 @@ def preprocess_image_batch(obj_batch, image_metadata, img_size):
 def train(frame, device):
 
     batch_size = 32
-    save_enabled = True
+    save_enabled = False
+    show_pca = True
     
     # Hyperparameters
     learning_rate = 0.001
-    num_epochs = 1000000
+    num_epochs = 20000
     logging_interval = 1
 
     img_size = 128
     channels = 3
-    emb_size = 16
+    emb_size = 64
     model = vitae.ViTAE(device,
         img_size = img_size, 
         channels = channels, 
         emb_size = emb_size).to(device)
-    #print(model)
+    print(model)
+    #wx.CallAfter(frame.Close)
+    #exit()
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
 
@@ -193,39 +196,49 @@ def train(frame, device):
     print(f"Num images: {len(image_metadata)}")
     print(f"Batch size: {batch_size}")
     
+    obj_data = obj_data[:12]
+    
+    print(f"Using num objects: {len(obj_data)}")
+    
     total_losses = []
     r_losses = []
     kld_losses = []
-    d_losses = []
+    p_losses = []
     
     
     target_idx = 0
     
     num_batches = (len(obj_data) + batch_size - 1) // batch_size
-    
+    print(f"num_batches: {num_batches}")
     lowest_loss = None
     #last_epoch = model.load("vae_checkpoint.pth", optimizer)
     for epoch in trange(num_epochs, desc="Training"):
+        total_loss = 0
+        r_loss = 0
+        kld_loss = 0
+        p_loss = 0
+        
+        show_image_list = []
+        latent_vectors = []
         for idx, obj_batch in tqdm(enumerate(utils.batches(obj_data, batch_size)), leave=False, total=num_batches, desc="Batch"):
             
             real_images = preprocess_image_batch(obj_batch, image_metadata, img_size)
             
-            outputs,total_loss,r_term,kld_term,p_term,latent_vectors = train_epoch(model, perceptual_loss, optimizer, epoch, frame, obj_batch, real_images, idx)
-            total_losses.append(total_loss)
-            r_losses.append(r_term)
-            kld_losses.append(kld_term)
-            d_losses.append(p_term)
+            outputs,loss,r_term,kld_term,p_term,lv = train_epoch(model, perceptual_loss, optimizer, epoch, frame, obj_batch, real_images, idx)
+            latent_vectors += lv
+            total_loss += loss / len(obj_data)
+            r_loss += r_term / len(obj_data)
+            kld_loss += kld_term / len(obj_data)
+            p_loss += p_term / len(obj_data)
             
-            if frame is not None and frame.done:
+            if frame and frame.done:
                 return
             
             if (epoch+1) % logging_interval == 0:
                 #print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {total_loss:.4f}, R_Loss: {r_term:.4f}, KLD Loss: {kld_term:.4f}, Perceptual Loss: {p_term:.4f}")
                 
-                show_image_list = []
-        
                 # First batch only
-                if idx==0:
+                if frame and idx==0:
                     with torch.no_grad():
                         model.eval()
                         # First time only
@@ -239,7 +252,7 @@ def train(frame, device):
                             show_image_list.append((idx+frame.cols,pil_image))
                         
                         z = model.encode(real_images[0].view(-1,3,img_size, img_size))
-                        z2 = model.encode(real_images[target_idx].view(-1,3,img_size, img_size))
+                        z2 = model.encode(real_images[4].view(-1,3,img_size, img_size))
                         
                         # change the interp target each time
                         target_idx = (target_idx + 1) % frame.cols
@@ -255,13 +268,23 @@ def train(frame, device):
                             show_image_list.append((i+frame.cols*2,pil_image))
                         
                     
-                    wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, kld_losses, d_losses, latent_vectors)
-                    if save_enabled:
-                        if lowest_loss is None:
-                            lowest_loss = total_loss+1
-                        if total_loss < lowest_loss:
-                            lowest_loss = total_loss
-                            model.save("vae_checkpoint.pth", optimizer, epoch)
+        total_losses.append(total_loss)
+        r_losses.append(r_loss)
+        kld_losses.append(kld_loss)
+        p_losses.append(p_loss)
+        
+        if not show_pca:
+            latent_vectors = None
+        if frame:
+            wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, kld_losses, p_losses, latent_vectors)
+        
+        if save_enabled:
+            if lowest_loss is None:
+                lowest_loss = total_loss+1
+            if total_loss < lowest_loss:
+                lowest_loss = total_loss
+                model.save("vae_checkpoint.pth", optimizer, epoch)
+        
 
 def start_training_thread(frame,device):
     t = threading.Thread(target=train, args=(frame,device,))
@@ -276,25 +299,20 @@ if __name__ == "__main__":
     device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using {device_string}")
     device = torch.device(device_string)
-
-    v = vitae.ViTAE(device).to(device)
     
-    img = torch.randn(10, 3, 64, 64).to(device)
-
-    out,z = v(img) # (1, 1000)
+    show_ui = True
     
-    print(f"out: {out.shape}")
-    print(f"z: {z.shape}")
-    
-
     seed = 42
     utils.seed_everywhere(seed)
     
-    app = wx.App(False)
-    frame = ImageLossFrame(None, 'Image Processing GUI')
-    frame.Show()
-    frame.thread = start_training_thread(frame, device)
-    
-    app.MainLoop()
+    if show_ui:
+        app = wx.App(False)
+        frame = ImageLossFrame(None, 'Image Processing GUI')
+        frame.Show()
+        frame.thread = start_training_thread(frame, device)
+        
+        app.MainLoop()
+    else:
+        train(None,device)
     
     print('Done!')
