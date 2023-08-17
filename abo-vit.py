@@ -201,10 +201,12 @@ def train(frame, device):
     
     target_idx = 0
     
+    num_batches = (len(obj_data) + batch_size - 1) // batch_size
+    
     lowest_loss = None
     #last_epoch = model.load("vae_checkpoint.pth", optimizer)
     for epoch in trange(num_epochs, desc="Training"):
-        for idx, obj_batch in tqdm(enumerate(utils.batches(obj_data, batch_size)), leave=False):
+        for idx, obj_batch in tqdm(enumerate(utils.batches(obj_data, batch_size)), leave=False, total=num_batches, desc="Batch"):
             
             real_images = preprocess_image_batch(obj_batch, image_metadata, img_size)
             
