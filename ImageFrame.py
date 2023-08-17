@@ -1,5 +1,6 @@
 import wx
 from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
@@ -100,6 +101,33 @@ class ImageLossFrame(wx.Frame):
         bitmap = wx_image.ConvertToBitmap()  # This converts it to a wx.Bitmap
         return bitmap
 
+    def show_pca(self, latent_vectors):
+        pca = PCA(n_components=2)
+        pca_results = pca.fit_transform(latent_vectors)
+    
+        if self.sc is not None:
+            self.sc.remove()
+        self.sc = plt.scatter(pca_results[:, 0], pca_results[:, 1])
+        plt.xlabel('Principal Component 1')
+        plt.ylabel('Principal Component 2')
+        plt.title('PCA visualization of latent space')
+        plt.draw()
+        plt.show()
+        
+    def show_tsne(self, latent_vectors):
+        seed=42
+        tsne = TSNE(random_state=seed, n_components=2, perplexity=1, n_iter=300)
+        tsne_results = tsne.fit_transform(latent_vectors)
+    
+        if self.sc is not None:
+            self.sc.remove()
+        self.sc = plt.scatter(tsne_results[:, 0], tsne_results[:, 1])
+        plt.xlabel('t-SNE Component 1')
+        plt.ylabel('t-SNE Component 2')
+        plt.title('t-SNE visualization of latent space')
+        plt.draw()
+        plt.show()
+
     def show_images(self, idx_images, total_losses, r_losses, kld_losses, d_losses, latent_vectors=None):
         
         self.update_plot(total_losses, r_losses, kld_losses, d_losses)
@@ -112,14 +140,4 @@ class ImageLossFrame(wx.Frame):
                 self.image_boxes[idx].SetBitmap(bitmap)
         
         if latent_vectors is not None:
-            tsne = TSNE(random_state=seed, n_components=2, perplexity=1, n_iter=300)
-            tsne_results = tsne.fit_transform(latent_vectors)
-        
-            if self.sc is not None:
-                self.sc.remove()
-            self.sc = plt.scatter(tsne_results[:, 0], tsne_results[:, 1])
-            plt.xlabel('t-SNE Component 1')
-            plt.ylabel('t-SNE Component 2')
-            plt.title('t-SNE visualization of latent space')
-            plt.draw()
-            plt.show()
+            self.show_pca(latent_vectors)

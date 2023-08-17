@@ -97,7 +97,7 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     
     display_outputs = outputs
     
-    #latent_vectors = z.view(batch_size,-1).detach().cpu()
+    latent_vectors = z.view(batch_size,-1).detach().cpu()
 
     # Loss
 
@@ -127,7 +127,7 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     total_loss.backward()
     optimizer.step()
     
-    return display_outputs, total_loss.item(), r_term.item(), 0, p_term.item()
+    return display_outputs, total_loss.item(), r_term.item(), 0, p_term.item(), latent_vectors
     
 def train(frame, device):
 
@@ -135,11 +135,10 @@ def train(frame, device):
     save_enabled = False
     
     # Hyperparameters
-    batch_size = 64
     learning_rate = 0.001
     num_epochs = 1000000
     noise_factor = 0.25
-    logging_interval = 5
+    logging_interval = 100
 
     img_size = 64
     channels = 3
@@ -190,12 +189,14 @@ def train(frame, device):
     # Flatten the image
     real_images = torch.stack(image_batch).view(len(image_batch), -1)
     
+    target_idx = 0
+    
     lowest_loss = None
     #last_epoch = model.load("vae_checkpoint.pth", optimizer)
     for epoch in range(num_epochs):
         #for idx, batch in enumerate(batches(data, batch_size)):
         idx = 0
-        outputs,total_loss,r_term,kld_term,p_term = train_epoch(model, perceptual_loss, optimizer, epoch, frame, obj_batch, real_images, idx)
+        outputs,total_loss,r_term,kld_term,p_term,latent_vectors = train_epoch(model, perceptual_loss, optimizer, epoch, frame, obj_batch, real_images, idx)
         total_losses.append(total_loss)
         r_losses.append(r_term)
         kld_losses.append(kld_term)
@@ -222,7 +223,10 @@ def train(frame, device):
                     show_image_list.append((idx+frame.cols,pil_image))
                 
                 z = model.encode(real_images[0].view(-1,3,img_size, img_size))
-                z2 = model.encode(real_images[4].view(-1,3,img_size, img_size))
+                z2 = model.encode(real_images[target_idx].view(-1,3,img_size, img_size))
+                
+                # change the interp target each time
+                target_idx = (target_idx + 1) % frame.cols
 
                 num_lerps = frame.cols
                 for i in range(num_lerps):
@@ -235,7 +239,7 @@ def train(frame, device):
                     show_image_list.append((i+frame.cols*2,pil_image))
                 
             
-            wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, kld_losses, d_losses)#, latent_vectors)
+            wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, kld_losses, d_losses, latent_vectors)
             if save_enabled:
                 if lowest_loss is None:
                     lowest_loss = total_loss+1
