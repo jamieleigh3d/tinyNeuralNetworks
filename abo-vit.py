@@ -162,13 +162,13 @@ def train(frame, device):
     
     # Hyperparameters
     learning_rate = 0.001
-    num_epochs = 20000
+    num_epochs = 30000
     logging_interval = 1
 
-    img_size=128
+    img_size=64
     channels=3
-    emb_size=64
-    num_layers=4
+    emb_size=16
+    num_layers=2
     num_heads=2
     patch_count=8
     patch_size=img_size//patch_count
@@ -342,7 +342,7 @@ if __name__ == "__main__":
     print(f"Using {device_string}")
     device = torch.device(device_string)
     
-    test_model()
+    #test_model()
     
     show_ui = True
     

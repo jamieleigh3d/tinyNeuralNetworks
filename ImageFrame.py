@@ -124,8 +124,9 @@ class ImageLossFrame(wx.Frame):
         self.update_plot(total_losses, r_losses, kld_losses, d_losses)
         
         for (idx, img) in idx_images:
-            #width, height = (128,128)
-            #img = img.resize((width, height))
+            width, height = (128,128)
+            if img.width < width or img.height < height:
+                img = img.resize((width, height))
             bitmap = self.PIL_to_wxBitmap(img)
             if idx >= 0 and idx < len(self.image_boxes):
                 self.image_boxes[idx].SetBitmap(bitmap)
