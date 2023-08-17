@@ -86,7 +86,8 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     model.train()
     
     tokenized_names = []
-    img_size = model.img_size
+    img_width = model.img_width
+    img_height = model.img_height
     
     latent_vectors = None
     
@@ -94,7 +95,7 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     
     # Train model
     
-    outputs, z = model.forward(real_images.view(batch_size,3,img_size,img_size))
+    outputs, z = model.forward(real_images.view(batch_size,3,img_height,img_width))
     
     display_outputs = outputs
     
@@ -107,11 +108,11 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     #recon_loss = F.l1_loss(outputs.view(batch_size,-1), real_images)
     
     # Compute perceptual loss
-    p_loss = perceptual_loss(outputs, real_images.view(batch_size, 3, img_size, img_size))
+    p_loss = perceptual_loss(outputs, real_images.view(batch_size, 3, img_height, img_width))
     
     # Combine all losses (reconstruction, KL divergence, and GAN loss)
 
-    recon_factor = 1.0 / batch_size #/ (model.img_size * model.img_size * model.channels)
+    recon_factor = 1.0 / batch_size #/ (model.img_height * model.img_width * model.channels)
     r_term = recon_loss*recon_factor
     
     beta_warmup_epochs = 500
