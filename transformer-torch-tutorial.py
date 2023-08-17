@@ -85,8 +85,8 @@ def data_process(raw_text_iter: dataset.IterableDataset) -> Tensor:
     
     data = []
     for item in raw_text_iter:
-        print(item)
-        print('='*78)
+        #print(item)
+        #print('='*78)
         data.append(torch.tensor(vocab(tokenizer(item)), dtype=torch.long))
     return torch.cat(tuple(filter(lambda t: t.numel() > 0, data)))
 
@@ -96,8 +96,6 @@ train_iter, val_iter, test_iter = WikiText2()
 train_data = data_process(train_iter)
 val_data = data_process(val_iter)
 test_data = data_process(test_iter)
-
-exit()
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -193,8 +191,8 @@ def evaluate(model: nn.Module, eval_data: Tensor) -> float:
             seq_len = data.size(0)
             output = model(data)
             output_flat = output.view(-1, ntokens)
-            print(f"output: {output_flat}")
-            print(f"targets: {targets}")
+            #print(f"output: {output_flat}")
+            #print(f"targets: {targets}")
             total_loss += seq_len * criterion(output_flat, targets).item()
     return total_loss / (len(eval_data) - 1)
     
