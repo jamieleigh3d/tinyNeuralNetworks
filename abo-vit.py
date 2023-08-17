@@ -561,7 +561,7 @@ def train(frame):
 
 
 
-def start_loading(frame):
+def start_training_thread(frame):
     t = threading.Thread(target=train, args=(frame,))
     t.daemon = True
 
@@ -572,8 +572,8 @@ if __name__ == "__main__":
     app = wx.App(False)
     frame = ImageLoaderFrame(None, 'Image Processing GUI')
     frame.Show()
-    frame.thread = start_loading(frame)
+    frame.thread = start_training_thread(frame)
     
     app.MainLoop()
     
-print('Done!')
+    print('Done!')
