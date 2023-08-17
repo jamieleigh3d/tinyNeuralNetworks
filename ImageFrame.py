@@ -9,17 +9,14 @@ class ImageLossFrame(wx.Frame):
     def __init__(self, parent, title):
         super().__init__(parent, title=title, size=(2100, 1200))
         
-        self.panel = wx.Panel(self)
-        
         self.SetPosition((100, 10))  # Set X and Y coordinates
-                
-        self.figure1, self.plot1 = self.create_plot()
-        self.figure2, self.plot2 = self.create_plot()
-        self.figure3, self.plot3 = self.create_plot()
-        self.canvas1 = FigureCanvas(self.panel, -1, self.figure1)
-        self.canvas2 = FigureCanvas(self.panel, -1, self.figure2)
-        self.canvas3 = FigureCanvas(self.panel, -1, self.figure3)
         
+        self.fig, self.axes = plt.subplots(1, 4, figsize=(20, 4))
+        self.canvas = FigureCanvas(self, -1, self.fig)
+        
+        for ax in self.axes:
+            ax.axis('off')
+            
         self.rows = 3
         self.cols = 12
         # Using a FlexGridSizer for the image grid
@@ -30,23 +27,20 @@ class ImageLossFrame(wx.Frame):
             self.grid.AddGrowableRow(i, 1)
         
         # Create image placeholders
-        self.image_boxes = [wx.StaticBitmap(self.panel) for _ in range(self.rows*self.cols)]  
+        self.image_boxes = [wx.StaticBitmap(self) for _ in range(self.rows*self.cols)]  
         for box in self.image_boxes:
             self.grid.Add(box, flag=wx.EXPAND)
         
         self.vbox = wx.BoxSizer(wx.VERTICAL)
         self.vbox.Add(self.grid, proportion=1, flag=wx.ALL | wx.EXPAND, border=10)
         
-        self.hbox = wx.BoxSizer(wx.HORIZONTAL)
-        self.hbox.Add(self.canvas1, 1, wx.EXPAND)
-        self.hbox.Add(self.canvas2, 1, wx.EXPAND)
-        self.hbox.Add(self.canvas3, 1, wx.EXPAND)
+        self.vbox.Add(self.canvas)
         
-        self.vbox.Add(self.hbox)
-        
-        self.panel.SetSizer(self.vbox)
+        self.SetSizer(self.vbox)
         
         self.sc = None
+        
+        self.Layout()
         
         self.done = False
         self.thread = None
@@ -67,31 +61,28 @@ class ImageLossFrame(wx.Frame):
         return figure, plot
     
     def update_plot(self, total_losses, r_losses, kld_losses, d_losses):
-        self.plot1.clear()
-        self.plot1.plot(r_losses)
-        self.plot1.plot(total_losses)
+        ax0 = self.axes[0]
+        ax0.clear()
+        ax0.plot(r_losses)
+        ax0.plot(total_losses)
+        ax0.set_xlabel('Epoch')
+        ax0.set_ylabel('Loss')
+        ax0.set_title('Total/Recon Losses')
         
-        #self.plot1.set_yscale('log')
-        self.plot1.set_xlabel('Epoch')
-        self.plot1.set_ylabel('Loss')
-        self.plot1.set_title('Total/Recon Losses')
-        self.canvas1.draw()
+        ax1 = self.axes[1]
+        ax1.clear()
+        ax1.clear()
+        ax1.plot(kld_losses)
+        ax1.set_xlabel('Epoch')
+        ax1.set_ylabel('Loss')
+        ax1.set_title('KLD Losses')
         
-        self.plot2.clear()
-        self.plot2.plot(kld_losses)
-        
-        self.plot2.set_xlabel('Epoch')
-        self.plot2.set_ylabel('Loss')
-        self.plot2.set_title('KLD Losses')
-        self.canvas2.draw()        
-        
-        self.plot3.clear()
-        self.plot3.plot(d_losses)
-        
-        self.plot3.set_xlabel('Epoch')
-        self.plot3.set_ylabel('Loss')
-        self.plot3.set_title('Perceptual Losses')
-        self.canvas3.draw()
+        ax2 = self.axes[2]
+        ax2.clear()
+        ax2.plot(d_losses)
+        ax2.set_xlabel('Epoch')
+        ax2.set_ylabel('Loss')
+        ax2.set_title('Perceptual Losses')
         
 
     def PIL_to_wxBitmap(self, pil_image):
@@ -105,28 +96,28 @@ class ImageLossFrame(wx.Frame):
         pca = PCA(n_components=2)
         pca_results = pca.fit_transform(latent_vectors)
     
-        if self.sc is not None:
-            self.sc.remove()
-        self.sc = plt.scatter(pca_results[:, 0], pca_results[:, 1])
-        plt.xlabel('Principal Component 1')
-        plt.ylabel('Principal Component 2')
-        plt.title('PCA visualization of latent space')
-        plt.draw()
-        plt.show()
+        ax = self.axes[3]
+        ax.clear()
+    
+        ax.scatter(pca_results[:, 0], pca_results[:, 1])
+        ax.set_xlabel('Principal Component 1')
+        ax.set_ylabel('Principal Component 2')
+        ax.set_title('PCA visualization of latent space')
+        
         
     def show_tsne(self, latent_vectors):
         seed=42
         tsne = TSNE(random_state=seed, n_components=2, perplexity=1, n_iter=300)
         tsne_results = tsne.fit_transform(latent_vectors)
     
-        if self.sc is not None:
-            self.sc.remove()
-        self.sc = plt.scatter(tsne_results[:, 0], tsne_results[:, 1])
-        plt.xlabel('t-SNE Component 1')
-        plt.ylabel('t-SNE Component 2')
-        plt.title('t-SNE visualization of latent space')
-        plt.draw()
-        plt.show()
+        ax = self.axes[3]
+        ax.clear()
+    
+        ax.scatter(tsne_results[:, 0], tsne_results[:, 1])
+        ax.set_xlabel('t-SNE Component 1')
+        ax.set_ylabel('t-SNE Component 2')
+        ax.set+title('t-SNE visualization of latent space')
+        
 
     def show_images(self, idx_images, total_losses, r_losses, kld_losses, d_losses, latent_vectors=None):
         
@@ -141,3 +132,5 @@ class ImageLossFrame(wx.Frame):
         
         if latent_vectors is not None:
             self.show_pca(latent_vectors)
+        
+        self.canvas.draw()
