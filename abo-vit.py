@@ -172,14 +172,14 @@ def train(frame, device):
     num_epochs = 30000
     logging_interval = 1
 
-    img_size=32
+    img_size=128
     channels=3
     emb_size=128
     num_layers=4
     num_heads=2
     patch_count=8
     patch_size=img_size//patch_count
-    mlp_dim=256
+    mlp_dim=emb_size*4
     print(f"mlp_dim: {mlp_dim}")
     model = vitae.ViTAE(
         img_size = img_size, 
@@ -197,7 +197,7 @@ def train(frame, device):
 
     # Loss and Optimizer
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
-    scheduler = lrschedulers.NoamLR(optimizer, d_model=emb_size, warmup_steps=1000)
+    scheduler = lrschedulers.NoamLR(optimizer, d_model=emb_size, warmup_steps=4000)
 
     # Load a pretrained feature extractor (e.g., VGG16)
     feature_extractor = tvm.vgg16(weights=tvm.VGG16_Weights.IMAGENET1K_FEATURES).features.to(device)
@@ -215,7 +215,7 @@ def train(frame, device):
     print(f"Num images: {len(image_metadata)}")
     print(f"Batch size: {batch_size}")
     
-    obj_data = obj_data[:128]
+    obj_data = obj_data[:12]
     
     print(f"Using num objects: {len(obj_data)}")
     
@@ -237,17 +237,19 @@ def train(frame, device):
         learning_rate = 0
         p_loss = 0
         
-        show_image_list = []
-        latent_vectors = []
         for idx, obj_batch in tqdm(enumerate(utils.batches(obj_data, batch_size)), leave=False, total=num_batches, desc="Batch"):
             
             real_images = preprocess_image_batch(obj_batch, image_metadata, img_size)
             
             outputs,loss,r_term,p_term,lv = train_epoch(model, perceptual_loss, optimizer, scheduler, epoch, frame, obj_batch, real_images, idx)
-            latent_vectors += lv
-            total_loss += loss / len(obj_data)
-            r_loss += r_term / len(obj_data)
-            p_loss += p_term / len(obj_data)
+            latent_vectors = lv
+            total_loss = loss / len(obj_batch)
+            r_loss = r_term / len(obj_batch)
+            p_loss = p_term / len(obj_batch)
+            
+            total_losses.append(total_loss)
+            r_losses.append(r_loss)
+            p_losses.append(p_loss)
             
             learning_rate = optimizer.param_groups[0]["lr"]
             learning_rates.append(learning_rate)
@@ -257,16 +259,17 @@ def train(frame, device):
             
             if (epoch+1) % logging_interval == 0:
                 
+                show_image_list = []
                 # First batch only
-                if frame and idx==0:
+                if frame and idx%10==0:
                     with torch.no_grad():
                         model.eval()
                         # First time only
-                        if (epoch+1) == logging_interval:
-                            for idx, img in enumerate(real_images[:frame.cols]):
-                                pil_image = utils.tensor_to_image(img.view(3,img_size,img_size).detach().cpu())
-                                show_image_list.append((idx, pil_image))
-                        
+#                        if (epoch+1) == logging_interval:
+                        for idx, img in enumerate(real_images[:frame.cols]):
+                            pil_image = utils.tensor_to_image(img.view(3,img_size,img_size).detach().cpu())
+                            show_image_list.append((idx, pil_image))
+                    
                         for idx, out in enumerate(outputs[:frame.cols]):
                             pil_image = utils.tensor_to_image(out.detach().cpu())
                             show_image_list.append((idx+frame.cols,pil_image))
@@ -286,17 +289,11 @@ def train(frame, device):
                             out = model.decode(latent_lerp)[0]
                             pil_image = utils.tensor_to_image(out.detach().cpu())
                             show_image_list.append((i+frame.cols*2,pil_image))
-                        
-            
-            
-        total_losses.append(total_loss)
-        r_losses.append(r_loss)
-        p_losses.append(p_loss)
-        
-        if not show_pca:
-            latent_vectors = None
-        if frame:
-            wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, learning_rates, p_losses, latent_vectors)
+                    
+                    if not show_pca:
+                        latent_vectors = None
+                    
+                    wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, learning_rates, p_losses, latent_vectors)
         
         if save_enabled:
             if lowest_loss is None:
