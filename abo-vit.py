@@ -124,7 +124,7 @@ def train_epoch(model, perceptual_loss, optimizer, scheduler, epoch, frame, batc
     kld_factor = 1.0*min(beta_warmup_epochs,epoch) / beta_warmup_epochs
     
     
-    p_factor = 1.0
+    p_factor = 10000.0
     p_term = p_loss * p_factor
     
     total_loss = r_term + l1_term + p_term
@@ -215,7 +215,7 @@ def train(frame, device):
     print(f"Num images: {len(image_metadata)}")
     print(f"Batch size: {batch_size}")
     
-    obj_data = obj_data[:128]
+    obj_data = obj_data
     
     print(f"Using num objects: {len(obj_data)}")
     
