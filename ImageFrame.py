@@ -73,9 +73,9 @@ class ImageLossFrame(wx.Frame):
         ax1.clear()
         ax1.clear()
         ax1.plot(kld_losses)
-        ax1.set_xlabel('Epoch')
-        ax1.set_ylabel('Loss')
-        ax1.set_title('KLD Losses')
+        ax1.set_xlabel('Step')
+        ax1.set_ylabel('LR')
+        ax1.set_title('Learning Rate')
         
         ax2 = self.axes[2]
         ax2.clear()

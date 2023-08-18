@@ -50,22 +50,27 @@ class ViTAE(nn.Module):
         ) 
 
         dim_head = 64
-        self.encoder = vit_pytorch.simple_vit.Transformer(emb_size, num_layers, num_heads, dim_head, mlp_dim)
+        self.encoder = vit_pytorch.simple_vit.Transformer(
+            dim = emb_size, 
+            depth = num_layers, 
+            heads = num_heads, 
+            dim_head = dim_head, 
+            mlp_dim = mlp_dim)
 
         
         transform_size = self.patch_count*self.patch_count*mlp_dim
-        print(f"transform_size: {transform_size}")
-        self.embedding = nn.Linear(emb_size, transform_size)
+        #print(f"transform_size: {transform_size}")
+        #self.embedding = nn.Linear(emb_size, transform_size)
         
         self.decoder = vit_pytorch.simple_vit.Transformer(
-            dim = transform_size, 
+            dim = emb_size, 
             depth = num_layers, 
             heads = num_heads, 
-            dim_head = 64, 
-            mlp_dim = 64,
+            dim_head = dim_head, 
+            mlp_dim = mlp_dim,
         )
         
-        self.mlp_head = nn.Linear(transform_size, channels*img_size*img_size)
+        self.mlp_head = nn.Linear(emb_size, channels*patch_height*patch_width)
     
     def learnable_params(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -84,33 +89,40 @@ class ViTAE(nn.Module):
         
         x = self.decode(z)
        
-        return x, z#.view(img.size(0), -1)
+        return x, z
         
     def encode(self, img):
-        #z = self.encoder(img)
-        
         device = img.device
         x = self.to_patch_embedding(img)
         x += self.pos_embedding.to(device, dtype=x.dtype)
         
         z = self.encoder(x)
-        z = z.mean(dim = 1)
+        
+        # Average each patch squence
+        # TODO: Get image latent through linear layer
+        #z = z.mean(dim = 1)
 
         return z
         
     def decode(self, z):
         
-        emb = self.embedding(z)#.view(-1, self.patch_size*self.patch_size, self.mlp_dim)
-        batch_size = emb.shape[0]
+        batch_size = z.shape[0]
         
-        emb = emb.view(batch_size, 1, -1)
-        
+        seq_length = self.patch_count * self.patch_count
+
+        # Reshape z to have sequence length
+        emb = z #.unsqueeze(1).repeat(1, seq_length, 1)
         x = self.decoder(emb)
         
-        x = x.mean(dim = 1)
+        #x = x.mean(dim = 1)
+        #print(f"\nx decoded: {x.shape}")
+        img = self.mlp_head(x)
+        #print(f"\nimg mlp_head: {img.shape}")
         
-        img = self.mlp_head(x).view(-1, self.channels, self.img_height, self.img_width)
+        img = img.view(-1, self.channels, self.img_height, self.img_width)
         img = F.sigmoid(img)
+        #print(f"img reshaped: {img.shape}")
+        #exit()
         return img
         
     def save(self, filepath, optimizer, epoch):

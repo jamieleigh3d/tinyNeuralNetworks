@@ -24,6 +24,7 @@ import vae
 import abo as abo
 import torch_utils as utils
 import vitae
+import lrschedulers
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -82,7 +83,7 @@ def vgg_preprocess(tensor):
     return (tensor - mean) / std
 
 # Training Loop
-def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_images, idx):
+def train_epoch(model, perceptual_loss, optimizer, scheduler, epoch, frame, batch, real_images, idx):
     model.train()
     
     tokenized_names = []
@@ -115,6 +116,10 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     recon_factor = 1.0 / batch_size #/ (model.img_height * model.img_width * model.channels)
     r_term = recon_loss*recon_factor
     
+    l1_factor = 0.0
+    with torch.no_grad():
+        l1_term = torch.mean(torch.abs(z.detach().cpu())) * l1_factor
+    
     beta_warmup_epochs = 500
     kld_factor = 1.0*min(beta_warmup_epochs,epoch) / beta_warmup_epochs
     
@@ -122,14 +127,15 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     p_factor = 1.0
     p_term = p_loss * p_factor
     
-    total_loss = r_term + p_term #+ g_loss
+    total_loss = r_term + l1_term + p_term
     
     # Backpropagation
     optimizer.zero_grad()
     total_loss.backward()
     optimizer.step()
+    scheduler.step()
     
-    return display_outputs, total_loss.item(), r_term.item(), 0, p_term.item(), latent_vectors
+    return display_outputs, total_loss.item(), r_term.item(), p_term.item(), latent_vectors
     
 def preprocess_image_batch(obj_batch, image_metadata, img_size):
     image_batch = []
@@ -156,24 +162,25 @@ def preprocess_image_batch(obj_batch, image_metadata, img_size):
     
 def train(frame, device):
 
-    batch_size = 32
+    batch_size = 64
     save_enabled = False
     show_pca = True
     
     # Hyperparameters
-    learning_rate = 0.001
+    # set a large initial lr as it'll be adjusted by the scheduler
+    learning_rate = 1
     num_epochs = 30000
     logging_interval = 1
 
-    img_size=64
+    img_size=32
     channels=3
-    emb_size=16
-    num_layers=2
+    emb_size=128
+    num_layers=4
     num_heads=2
     patch_count=8
     patch_size=img_size//patch_count
-    mlp_dim=16
-    
+    mlp_dim=256
+    print(f"mlp_dim: {mlp_dim}")
     model = vitae.ViTAE(
         img_size = img_size, 
         channels = channels, 
@@ -189,7 +196,8 @@ def train(frame, device):
     
 
     # Loss and Optimizer
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+    scheduler = lrschedulers.NoamLR(optimizer, d_model=emb_size, warmup_steps=1000)
 
     # Load a pretrained feature extractor (e.g., VGG16)
     feature_extractor = tvm.vgg16(weights=tvm.VGG16_Weights.IMAGENET1K_FEATURES).features.to(device)
@@ -207,14 +215,14 @@ def train(frame, device):
     print(f"Num images: {len(image_metadata)}")
     print(f"Batch size: {batch_size}")
     
-    obj_data = obj_data[:12]
+    obj_data = obj_data[:128]
     
     print(f"Using num objects: {len(obj_data)}")
     
     total_losses = []
     r_losses = []
-    kld_losses = []
     p_losses = []
+    learning_rates = []
     
     
     target_idx = 0
@@ -226,7 +234,7 @@ def train(frame, device):
     for epoch in trange(num_epochs, desc="Training"):
         total_loss = 0
         r_loss = 0
-        kld_loss = 0
+        learning_rate = 0
         p_loss = 0
         
         show_image_list = []
@@ -235,18 +243,19 @@ def train(frame, device):
             
             real_images = preprocess_image_batch(obj_batch, image_metadata, img_size)
             
-            outputs,loss,r_term,kld_term,p_term,lv = train_epoch(model, perceptual_loss, optimizer, epoch, frame, obj_batch, real_images, idx)
+            outputs,loss,r_term,p_term,lv = train_epoch(model, perceptual_loss, optimizer, scheduler, epoch, frame, obj_batch, real_images, idx)
             latent_vectors += lv
             total_loss += loss / len(obj_data)
             r_loss += r_term / len(obj_data)
-            kld_loss += kld_term / len(obj_data)
             p_loss += p_term / len(obj_data)
+            
+            learning_rate = optimizer.param_groups[0]["lr"]
+            learning_rates.append(learning_rate)
             
             if frame and frame.done:
                 return
             
             if (epoch+1) % logging_interval == 0:
-                #print(f"Epoch {epoch+1}/{num_epochs}, Total Loss: {total_loss:.4f}, R_Loss: {r_term:.4f}, KLD Loss: {kld_term:.4f}, Perceptual Loss: {p_term:.4f}")
                 
                 # First batch only
                 if frame and idx==0:
@@ -278,16 +287,16 @@ def train(frame, device):
                             pil_image = utils.tensor_to_image(out.detach().cpu())
                             show_image_list.append((i+frame.cols*2,pil_image))
                         
-                    
+            
+            
         total_losses.append(total_loss)
         r_losses.append(r_loss)
-        kld_losses.append(kld_loss)
         p_losses.append(p_loss)
         
         if not show_pca:
             latent_vectors = None
         if frame:
-            wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, kld_losses, p_losses, latent_vectors)
+            wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, learning_rates, p_losses, latent_vectors)
         
         if save_enabled:
             if lowest_loss is None:
