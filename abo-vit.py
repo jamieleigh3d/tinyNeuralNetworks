@@ -169,7 +169,7 @@ def train(frame, device):
     # Hyperparameters
     # set a large initial lr as it'll be adjusted by the scheduler
     learning_rate = 1
-    num_epochs = 30000
+    num_epochs = 1000000
     logging_interval = 1
 
     img_size=128
@@ -215,7 +215,7 @@ def train(frame, device):
     print(f"Num images: {len(image_metadata)}")
     print(f"Batch size: {batch_size}")
     
-    obj_data = obj_data[:12]
+    obj_data = obj_data[:128]
     
     print(f"Using num objects: {len(obj_data)}")
     
