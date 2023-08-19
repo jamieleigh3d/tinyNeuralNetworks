@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
+
 import tokenization as T
 import lrschedulers
 from datasets import TextDataset, escape
@@ -26,7 +27,7 @@ class TextTransformer(nn.Module):
         x = self.fc(x[:, -1, :]) # taking only the last token for prediction
         return x
 
-def train_text(model, dataloader, NUM_TOKENS, epochs=50, lr=0.0001):
+def train_text(model, dataloader, NUM_TOKENS, epochs=50, lr=0.001):
     model.train()
     
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -46,10 +47,18 @@ def train_text(model, dataloader, NUM_TOKENS, epochs=50, lr=0.0001):
         print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_epoch_loss}")
 
 if __name__ == "__main__":
+    import sys
+    import nltk
+    from nltk.corpus import reuters
+    
+    sys.stdout.reconfigure(encoding='utf-8')
 
     device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using {device_string}")
     device = torch.device(device_string)
+    
+    
+    nltk.download('reuters')
     
     # Dummy dataset
     input_texts = [
@@ -66,8 +75,17 @@ if __name__ == "__main__":
     #    "See spot run. Run spot run!"
     #]
 
-    input_texts = [ "Got milk?" ]
+    input_texts = [ "Got the milk?" ]
 
+    sentences = [reuters.raw(fileid) for fileid in reuters.fileids()]
+    
+#    for s in sentences:
+ #       print(s)
+  #      print('-'*78)
+    input_texts = sentences[:1000]
+
+    print(len(input_texts))
+    
     #data, labels = generate_random_data()
     tokenizer = T.UTF8Tokenizer()
     dataset = TextDataset(tokenizer)
@@ -76,17 +94,15 @@ if __name__ == "__main__":
     
     input_sequences, input_masks, target_sequences = dataset.load(input_texts, seq_len=MAX_SEQ_LEN)
     
-    print(input_sequences)
-    print(target_sequences)
     str_list = tokenizer.indices_to_texts(input_sequences, input_masks)
     target = tokenizer.indices_to_text(target_sequences)
-    for idx, str in enumerate(str_list):
-        targ = target[idx]
-        print(f"'{escape(str)}' => '{escape(targ)}'")
+    # for idx, str in enumerate(str_list):
+        # targ = target[idx]
+        # print(f"'{escape(str)}' => '{escape(targ)}'")
     
     print(f"Num inputs: {len(input_sequences)}")
     
-    BATCH_SIZE = 16
+    BATCH_SIZE = 128
     NUM_TOKENS = tokenizer.vocab_size()
     
     #exit()
