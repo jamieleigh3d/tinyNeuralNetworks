@@ -106,7 +106,7 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
 
     # Loss
 
-    recon_loss = F.binary_cross_entropy(outputs.view(batch_size,-1), real_images, reduction='sum')
+    recon_loss = F.binary_cross_entropy(outputs.view(batch_size,-1), real_images, reduction='mean')
     #recon_loss = F.mse_loss(outputs.view(batch_size,-1), real_images)
     #recon_loss = F.l1_loss(outputs.view(batch_size,-1), real_images)
     
@@ -115,8 +115,8 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     
     # Combine all losses (reconstruction, KL divergence, and GAN loss)
 
-    recon_factor = 1.0 / batch_size #/ (model.img_height * model.img_width * model.channels)
-    r_term = recon_loss*recon_factor
+    recon_factor = 1.0 #/ batch_size #/ (model.img_height * model.img_width * model.channels)
+    r_term = recon_loss * recon_factor
     
     l1_factor = 0.0
     with torch.no_grad():
@@ -126,7 +126,7 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     kld_factor = 1.0*min(beta_warmup_epochs,epoch) / beta_warmup_epochs
     
     
-    p_factor = 10000.0
+    p_factor = 0.0
     p_term = p_loss * p_factor
     
     total_loss = r_term + l1_term + p_term

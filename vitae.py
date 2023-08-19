@@ -75,9 +75,9 @@ class ViTAE(nn.Module):
             nn.Linear(emb_size, patch_dim),
             nn.LayerNorm(patch_dim),
             Rearrange("b (h w) (p1 p2 c) -> b c (h p1) (w p2)", p1 = patch_height, p2 = patch_width, h = self.patch_count, w = self.patch_count),
+            nn.ConvTranspose2d(channels, channels, kernel_size=3, stride=1, padding=1), # => channels x W x H
+            nn.Sigmoid()
         )
-        
-        #self.mlp_head = nn.Linear(emb_size, patch_dim)
     
     def learnable_params(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -108,7 +108,7 @@ class ViTAE(nn.Module):
         # Average each patch squence
         # TODO: Get image latent through linear layer
         #z = z.mean(dim = 1)
-
+        
         return z
         
     def decode(self, z):
@@ -120,14 +120,8 @@ class ViTAE(nn.Module):
         emb = z
         x = self.decoder(emb)
         
-        #x = x.mean(dim = 1)
-        #print(f"\nx decoded: {x.shape}")
         img = self.from_patch_embedding(x)
-        #print(f"\nimg fpe: {img.shape}")
         
-        #img = img.view(-1, self.channels, self.img_height, self.img_width)
-        img = F.sigmoid(img)
-        #print(f"img reshaped: {img.shape}")
         return img
         
     def save(self, filepath, optimizer, epoch):
