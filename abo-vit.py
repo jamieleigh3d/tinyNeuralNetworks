@@ -165,7 +165,7 @@ def preprocess_image_batch(obj_batch, image_metadata, img_size):
 def train(frame, device):
 
     batch_size = 64
-    save_enabled = False
+    save_enabled = True
     show_pca = True
     
     # Hyperparameters
@@ -294,7 +294,7 @@ def train(frame, device):
                             
                             #out = latent_vectors[i].view(-1,img_size,img_size).clone().detach()
                             #out = out.expand(3, -1, -1)
-                            pil_image = utils.tensor_to_image(out,detach().cpu())
+                            pil_image = utils.tensor_to_image(out.detach().cpu())
                             show_image_list.append((i+frame.cols*2,pil_image))
                     
                     if not show_pca:
