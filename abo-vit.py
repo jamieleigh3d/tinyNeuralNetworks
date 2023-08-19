@@ -83,8 +83,10 @@ def vgg_preprocess(tensor):
     return (tensor - mean) / std
 
 # Training Loop
-def train_epoch(model, perceptual_loss, optimizer, scheduler, epoch, frame, batch, real_images, idx):
+def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_images, idx, scheduler=None):
     model.train()
+    
+    optimizer.zero_grad()
     
     tokenized_names = []
     img_width = model.img_width
@@ -130,10 +132,10 @@ def train_epoch(model, perceptual_loss, optimizer, scheduler, epoch, frame, batc
     total_loss = r_term + l1_term + p_term
     
     # Backpropagation
-    optimizer.zero_grad()
     total_loss.backward()
     optimizer.step()
-    scheduler.step()
+    if scheduler:
+        scheduler.step()
     
     return display_outputs, total_loss.item(), r_term.item(), p_term.item(), latent_vectors
     
@@ -168,7 +170,7 @@ def train(frame, device):
     
     # Hyperparameters
     # set a large initial lr as it'll be adjusted by the scheduler
-    learning_rate = 1
+    learning_rate = .001
     num_epochs = 1000000
     logging_interval = 1
 
@@ -191,13 +193,15 @@ def train(frame, device):
         mlp_dim = mlp_dim
     ).to(device)
     
+    #print(model)
+    #exit()
     
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
 
     # Loss and Optimizer
-    optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
-    scheduler = lrschedulers.NoamLR(optimizer, d_model=emb_size, warmup_steps=4000)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    #scheduler = lrschedulers.NoamLR(optimizer, d_model=emb_size, warmup_steps=4000)
 
     # Load a pretrained feature extractor (e.g., VGG16)
     feature_extractor = tvm.vgg16(weights=tvm.VGG16_Weights.IMAGENET1K_FEATURES).features.to(device)
@@ -215,7 +219,7 @@ def train(frame, device):
     print(f"Num images: {len(image_metadata)}")
     print(f"Batch size: {batch_size}")
     
-    obj_data = obj_data
+    obj_data = obj_data[:12]
     
     print(f"Using num objects: {len(obj_data)}")
     
@@ -241,7 +245,7 @@ def train(frame, device):
             
             real_images = preprocess_image_batch(obj_batch, image_metadata, img_size)
             
-            outputs,loss,r_term,p_term,lv = train_epoch(model, perceptual_loss, optimizer, scheduler, epoch, frame, obj_batch, real_images, idx)
+            outputs,loss,r_term,p_term,lv = train_epoch(model, perceptual_loss, optimizer, epoch, frame, obj_batch, real_images, idx)
             latent_vectors = lv
             total_loss = loss / len(obj_batch)
             r_loss = r_term / len(obj_batch)

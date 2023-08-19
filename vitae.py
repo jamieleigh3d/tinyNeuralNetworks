@@ -70,7 +70,14 @@ class ViTAE(nn.Module):
             mlp_dim = mlp_dim,
         )
         
-        self.mlp_head = nn.Linear(emb_size, channels*patch_height*patch_width)
+        self.from_patch_embedding = nn.Sequential(
+            nn.LayerNorm(emb_size),
+            nn.Linear(emb_size, patch_dim),
+            nn.LayerNorm(patch_dim),
+            Rearrange("b (h w) (p1 p2 c) -> b c (h p1) (w p2)", p1 = patch_height, p2 = patch_width, h = self.patch_count, w = self.patch_count),
+        )
+        
+        #self.mlp_head = nn.Linear(emb_size, patch_dim)
     
     def learnable_params(self):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -84,11 +91,11 @@ class ViTAE(nn.Module):
         assert len(img.shape) == 4, f"Expected img to have 4 dimensions, found {len(img.shape)}"
         assert self.channels == img.shape[1], 'Image channels (shape[1]) must match ViTAE channels.'
         assert self.img_height == img.shape[2] and self.img_width == img.shape[3], 'Image dimensions (shape[2] and shape[3]) must match ViTAE dimensions.'
-
+        
         z = self.encode(img)
         
         x = self.decode(z)
-       
+        
         return x, z
         
     def encode(self, img):
@@ -110,19 +117,17 @@ class ViTAE(nn.Module):
         
         seq_length = self.patch_count * self.patch_count
 
-        # Reshape z to have sequence length
-        emb = z #.unsqueeze(1).repeat(1, seq_length, 1)
+        emb = z
         x = self.decoder(emb)
         
         #x = x.mean(dim = 1)
         #print(f"\nx decoded: {x.shape}")
-        img = self.mlp_head(x)
-        #print(f"\nimg mlp_head: {img.shape}")
+        img = self.from_patch_embedding(x)
+        #print(f"\nimg fpe: {img.shape}")
         
-        img = img.view(-1, self.channels, self.img_height, self.img_width)
+        #img = img.view(-1, self.channels, self.img_height, self.img_width)
         img = F.sigmoid(img)
         #print(f"img reshaped: {img.shape}")
-        #exit()
         return img
         
     def save(self, filepath, optimizer, epoch):
