@@ -36,17 +36,17 @@ class TextDataset():
         input_masks = []
         target_sequences = []
         for t in training_tokens:
-            for s in range(1,seq_len+1):
+            for s in range(3,seq_len+1):
             #s = seq_len
                 for i in range(len(t) - s):
                     sequence = t[i:i+s]
-                    next = t[i+s:i+s+seq_len]
+                    next = t[i+s]
                     
                     # Pad the sequence
                     while len(sequence) < seq_len:
-                        sequence.append(pad_idx)
-                    while len(next) < seq_len:
-                        next.append(pad_idx)
+                        sequence.insert(0, pad_idx)
+                    #while len(next) < seq_len:
+                    #    next.append(pad_idx)
                     
                     mask = self.generate_mask(sequence, pad_idx)
                     
