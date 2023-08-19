@@ -219,7 +219,7 @@ def train(frame, device):
     print(f"Num images: {len(image_metadata)}")
     print(f"Batch size: {batch_size}")
     
-    obj_data = obj_data[:12]
+    obj_data = obj_data
     
     print(f"Using num objects: {len(obj_data)}")
     
@@ -283,7 +283,7 @@ def train(frame, device):
                         
                         # change the interp target each time
                         target_idx = (target_idx + 1) % frame.cols
-
+                        
                         num_lerps = frame.cols
                         for i in range(num_lerps):
                             alpha = i / num_lerps
@@ -291,7 +291,10 @@ def train(frame, device):
                             latent_lerp = utils.slerp(z, z2, alpha)
                             
                             out = model.decode(latent_lerp)[0]
-                            pil_image = utils.tensor_to_image(out.detach().cpu())
+                            
+                            #out = latent_vectors[i].view(-1,img_size,img_size).clone().detach()
+                            #out = out.expand(3, -1, -1)
+                            pil_image = utils.tensor_to_image(out,detach().cpu())
                             show_image_list.append((i+frame.cols*2,pil_image))
                     
                     if not show_pca:
