@@ -9,6 +9,7 @@ def escape(input_string):
     replaced_newlines = replaced_tabs.replace('\n', '\\n')
     
     return replaced_newlines
+
 class TextDataset():
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
@@ -35,15 +36,15 @@ class TextDataset():
         input_masks = []
         target_sequences = []
         for t in training_tokens:
-            for s in range(3,seq_len+1):
-                #s = seq_len
+            for s in range(1,seq_len+1):
+            #s = seq_len
                 for i in range(len(t) - s):
                     sequence = t[i:i+s]
                     next = t[i+s:i+s+seq_len]
                     
                     # Pad the sequence
                     while len(sequence) < seq_len:
-                        sequence.insert(0, pad_idx)
+                        sequence.append(pad_idx)
                     while len(next) < seq_len:
                         next.append(pad_idx)
                     
