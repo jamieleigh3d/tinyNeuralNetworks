@@ -126,7 +126,7 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     kld_factor = 1.0*min(beta_warmup_epochs,epoch) / beta_warmup_epochs
     
     
-    p_factor = 0.0
+    p_factor = 1.0
     p_term = p_loss * p_factor
     
     total_loss = r_term + l1_term + p_term
@@ -176,7 +176,7 @@ def train(frame, device):
 
     img_size=128
     channels=3
-    emb_size=128
+    emb_size=256
     num_layers=4
     num_heads=2
     patch_count=8
