@@ -28,31 +28,30 @@ class TextDataset():
             #t.insert(0, start_seq_idx)
             t.append(end_seq_idx)
         str_list = tokenizer.indices_to_texts(training_tokens)
-        for str in str_list:
-            print(escape(str))
+        #for idx, str in enumerate(str_list):
+        #    print(f"{idx}: '{escape(str)}' => {training_tokens[idx]}")
         print()
         
         input_sequences = []
         input_masks = []
         target_sequences = []
         for t in training_tokens:
-            #for s in range(3,seq_len+1):
-            s = seq_len
-            for i in range(len(t) - s):
-                sequence = t[i:i+s]
-                next = t[i+s]
-                
-                # Pad the sequence
-                while len(sequence) < seq_len:
-                    sequence.insert(0, pad_idx)
-                #while len(next) < seq_len:
-                #    next.append(pad_idx)
-                
-                mask = self.generate_mask(sequence, pad_idx)
-                
-                input_sequences.append(sequence)
-                input_masks.append(mask)
-                target_sequences.append(next)
+        
+            for s in range(1,seq_len+1):
+            
+                #s = seq_len
+                for i in range(len(t) - s):
+                    sequence = t[i:i+s]
+                    next = [t[i+s]]
+                    
+                    # Pad the sequence
+                    while len(sequence) < seq_len:
+                        sequence.insert(0, pad_idx)
+                    
+                    mask = self.generate_mask(sequence, pad_idx)
+                    input_sequences.append(sequence)
+                    input_masks.append(mask)
+                    target_sequences.append(next)
 
         return input_sequences, input_masks, target_sequences
 
