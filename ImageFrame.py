@@ -54,17 +54,22 @@ class ImageLossFrame(wx.Frame):
         self.done = True
         if self.thread is not None:
             self.thread.join()
+            self.thread = None
 
     def create_plot(self):
         figure = Figure()
         plot = figure.add_subplot(111)
         return figure, plot
     
-    def update_plot(self, total_losses, r_losses, kld_losses, d_losses):
+    def update_plot(self, total_losses, avg_losses, r_losses, learning_rates, p_losses):
         ax0 = self.axes[0]
         ax0.clear()
-        ax0.plot(r_losses)
-        ax0.plot(total_losses)
+        if r_losses:
+            ax0.plot(r_losses)
+        if total_losses:
+            ax0.plot(total_losses)
+        if avg_losses:
+            ax0.plot(avg_losses)
         ax0.set_xlabel('Epoch')
         ax0.set_ylabel('Loss')
         ax0.set_title('Total/Recon Losses')
@@ -72,14 +77,16 @@ class ImageLossFrame(wx.Frame):
         ax1 = self.axes[1]
         ax1.clear()
         ax1.clear()
-        ax1.plot(kld_losses)
+        if learning_rates:
+            ax1.plot(learning_rates)
         ax1.set_xlabel('Step')
         ax1.set_ylabel('LR')
         ax1.set_title('Learning Rate')
         
         ax2 = self.axes[2]
         ax2.clear()
-        ax2.plot(d_losses)
+        if p_losses:
+            ax2.plot(p_losses)
         ax2.set_xlabel('Epoch')
         ax2.set_ylabel('Loss')
         ax2.set_title('Perceptual Losses')
@@ -99,7 +106,7 @@ class ImageLossFrame(wx.Frame):
         ax = self.axes[3]
         ax.clear()
     
-        ax.scatter(pca_results[:, 0], pca_results[:, 1])
+        ax.scatter(pca_results[:, 0], pca_results[:, 1], s=2)
         ax.set_xlabel('Principal Component 1')
         ax.set_ylabel('Principal Component 2')
         ax.set_title('PCA visualization of latent space')
@@ -113,15 +120,15 @@ class ImageLossFrame(wx.Frame):
         ax = self.axes[3]
         ax.clear()
     
-        ax.scatter(tsne_results[:, 0], tsne_results[:, 1])
+        ax.scatter(tsne_results[:, 0], tsne_results[:, 1], s=2)
         ax.set_xlabel('t-SNE Component 1')
         ax.set_ylabel('t-SNE Component 2')
         ax.set+title('t-SNE visualization of latent space')
         
 
-    def show_images(self, idx_images, total_losses, r_losses, kld_losses, d_losses, latent_vectors=None):
+    def show_images(self, idx_images, total_losses=None, avg_losses=None, r_losses=None, learning_rates=None, p_losses=None, latent_vectors=None):
         
-        self.update_plot(total_losses, r_losses, kld_losses, d_losses)
+        self.update_plot(total_losses, avg_losses, r_losses, learning_rates, p_losses)
         
         for (idx, img) in idx_images:
             width, height = (128,128)

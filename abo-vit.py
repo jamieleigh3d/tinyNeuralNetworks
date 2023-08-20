@@ -115,7 +115,7 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     
     # Combine all losses (reconstruction, KL divergence, and GAN loss)
 
-    recon_factor = 1.0 #/ batch_size #/ (model.img_height * model.img_width * model.channels)
+    recon_factor = 1.0
     r_term = recon_loss * recon_factor
     
     l1_factor = 0.0
@@ -149,16 +149,20 @@ def preprocess_image_batch(obj_batch, image_metadata, img_size):
         if img_path is not None:
             pil_image = PILImage.open(img_path)
             pil_image = resize_with_padding(pil_image, (img_size,img_size))
-            name = abo.get_itemname_for_object(obj)
-            if name is not None:
-                if (pil_image.getbands() != 3):
-                    pil_image = pil_image.convert('RGB')
-                tensor_image = utils.image_to_tensor(pil_image).to(device)
-                image_batch.append(tensor_image)
+            #name = abo.get_itemname_for_object(obj)
+            #if name is not None:
                 #tokens = tokenize_without_punctuation(name)
                 #tokenized_names.append(tokens)
+            if (pil_image.getbands() != 3):
+                pil_image = pil_image.convert('RGB')
+            tensor_image = utils.image_to_tensor(pil_image).to(device)
+            image_batch.append(tensor_image)
+                
     
     # Flatten the image
+    if len(image_batch)==0:
+        return None
+        
     real_images = torch.stack(image_batch).view(len(image_batch), -1)
     return real_images
     
@@ -308,7 +312,142 @@ def train(frame, device):
             if total_loss < lowest_loss:
                 lowest_loss = total_loss
                 model.save("vae_checkpoint.pth", optimizer, epoch)
+
+
+def test_data(frame, device):
+
+    batch_size = 64
+    save_enabled = True
+    show_pca = True
+    
+    # Hyperparameters
+    # set a large initial lr as it'll be adjusted by the scheduler
+    learning_rate = .001
+    num_epochs = 1000000
+    logging_interval = 1
+
+    img_size=128
+    channels=3
+    emb_size=256
+    num_layers=4
+    num_heads=2
+    patch_count=8
+    patch_size=img_size//patch_count
+    mlp_dim=emb_size*4
+    print(f"mlp_dim: {mlp_dim}")
+    
+    model = vitae.ViTAE(
+        img_size = img_size, 
+        channels = channels, 
+        emb_size = emb_size,
+        num_layers = num_layers,
+        num_heads = num_heads,
+        patch_size = patch_size,
+        mlp_dim = mlp_dim
+    ).to(device)
+    
+    filepath = "vae_checkpoint.20k-vitae-7f559ce.pth"
+    epoch = model.load("vae_checkpoint.pth")
+    
+    print(f'Checkpoint loaded from {filepath} at epoch {epoch}')
+    
+    #print(model)
+    #exit()
+    
+    print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
+    
+    # Load a pretrained feature extractor (e.g., VGG16)
+    feature_extractor = tvm.vgg16(weights=tvm.VGG16_Weights.IMAGENET1K_FEATURES).features.to(device)
+    feature_extractor.eval()
+    for param in feature_extractor.parameters():
+        param.requires_grad = False
+
+    perceptual_loss = PerceptualLoss(feature_extractor)
+
+    
+    obj_data = abo.load_objects()
+    image_metadata = abo.load_images()
+    
+    print(f"Num objects: {len(obj_data)}")
+    print(f"Num images: {len(image_metadata)}")
+    print(f"Batch size: {batch_size}")
+    
+    obj_data = obj_data
+    
+    print(f"Using num objects: {len(obj_data)}")
+    
+    latent_vectors = []
+    total_losses = []
+    p_losses = []
+    r_losses = []
+    total_loss = 0
+    avg_losses = []
+    
+    with torch.no_grad():
+        model.eval()
+        num_batches = (len(obj_data) + batch_size - 1) // batch_size
         
+        for batch_idx, obj_batch in tqdm(enumerate(utils.batches(obj_data, batch_size)), leave=True, total=num_batches, desc="Batch"):
+            
+            real_images = preprocess_image_batch(obj_batch, image_metadata, img_size)
+
+            outputs,z = model(real_images.view(-1,channels,img_size, img_size))
+            z = z.view(outputs.shape[0], -1).detach().cpu().tolist()
+            latent_vectors.extend(z)
+            #latent_vectors=z
+
+            # Compute reconstruction BCE loss
+            recon_loss = F.binary_cross_entropy(outputs.view(-1,channels*img_size*img_size), real_images, reduction='mean')
+            
+            # Compute perceptual loss
+            p_loss = perceptual_loss(outputs, real_images.view(-1, channels, img_size, img_size))
+            
+            # Combine all losses (reconstruction, KL divergence, and GAN loss)
+
+            recon_factor = 1.0
+            r_term = recon_loss.item() * recon_factor
+            
+            p_factor = 1.0
+            p_term = p_loss.item() * p_factor
+            
+            total_loss = (r_term + p_term) / len(obj_batch)
+            r_loss = r_term / len(obj_batch)
+            p_loss = p_term / len(obj_batch)
+            
+            total_losses.append(total_loss)
+            r_losses.append(r_loss)
+            p_losses.append(p_loss)
+            
+            total_loss += r_loss
+            
+            avg_loss = total_loss / (batch_idx+1)
+            avg_losses.append(avg_loss)
+                
+            if frame and frame.done:
+                return
+            
+            if batch_idx%100 == 0:
+                show_image_list = []
+                
+                for idx, img in enumerate(real_images[:frame.cols]):
+                    pil_image = utils.tensor_to_image(img.view(channels,img_size,img_size).detach().cpu())
+                    show_image_list.append((idx, pil_image))
+                
+                for idx, out in enumerate(outputs[:frame.cols]):
+                    pil_image = utils.tensor_to_image(out.detach().cpu())
+                    show_image_list.append((idx+frame.cols,pil_image))
+                
+                print(f" Batch {batch_idx}: avg_loss={avg_loss:.4f}")
+                
+                wx.CallAfter(
+                    frame.show_images, 
+                    show_image_list, 
+                    total_losses=total_losses,
+                    avg_losses=avg_losses,
+                    r_losses=r_losses,
+                    p_losses=p_losses,
+                    latent_vectors=latent_vectors)
+    
 
 def start_training_thread(frame,device):
     t = threading.Thread(target=train, args=(frame,device,))
@@ -316,8 +455,16 @@ def start_training_thread(frame,device):
 
     t.start()
     return t
+    
+    
+def start_testing_thread(frame,device):
+    t = threading.Thread(target=test_data, args=(frame,device,))
+    t.daemon = True
 
-def test_model():
+    t.start()
+    return t
+
+def exercise_model():
     
     img_size=64
     channels=3
@@ -349,13 +496,12 @@ def test_model():
     del model
 
 if __name__ == "__main__":
-
-
+    
     device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using {device_string}")
     device = torch.device(device_string)
     
-    #test_model()
+    #exercise_model()
     
     show_ui = True
     
@@ -366,10 +512,12 @@ if __name__ == "__main__":
         app = wx.App(False)
         frame = ImageLossFrame(None, 'Image Processing GUI')
         frame.Show()
-        frame.thread = start_training_thread(frame, device)
+        #frame.thread = start_training_thread(frame, device)
+        frame.thread = start_testing_thread(frame, device)
         
         app.MainLoop()
     else:
-        train(None,device)
+        #train(None,device)
+        print("Training done!")
     
     print('Done!')

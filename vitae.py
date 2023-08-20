@@ -160,5 +160,4 @@ class ViTAE(nn.Module):
         
         epoch = checkpoint['epoch']
         
-        #print(f'Checkpoint loaded from {filepath} at epoch {epoch}')
         return epoch
