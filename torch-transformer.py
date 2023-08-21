@@ -10,24 +10,65 @@ import lrschedulers
 from datasets import TextDataset, escape
 
 class TextTransformer(nn.Module):
-    def __init__(self, vocab_size, embed_dim=64, num_heads=4, num_decoder_layers=2):
+    def __init__(self, vocab_size, block_size=1024, embed_dim=64, num_heads=4, num_decoder_layers=2):
         super(TextTransformer, self).__init__()
         
+        self.block_size = block_size
         self.embedding = nn.Embedding(vocab_size, embed_dim)
+        self.pos_embedding = nn.Embedding(block_size, embed_dim)
         self.transformer = nn.Transformer(
             d_model=embed_dim, 
             nhead=num_heads, 
             num_decoder_layers=num_decoder_layers
         )
         self.fc = nn.Linear(embed_dim, vocab_size)
+        # TODO: Tie embedding weights with fc weights
         
     def forward(self, x):
-        x = self.embedding(x)
-        x = self.transformer.encoder(x)
-        x = self.fc(x[:, -1, :]) # taking only the last token for prediction
+        
+        emb = self.embedding(x)
+        
+        t = x.shape[1]
+        positions = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
+        pos_emb = self.pos_embedding(positions)
+        
+        emb = emb + pos_emb
+        
+        #TODO: Add dropout layer here
+        
+        x = self.transformer.encoder(emb)
+        x = self.fc(x[:, [-1], :]) # taking only the last token for prediction, [-1] preserving the dimensionality
         return x
 
-def train_text(model, dataloader, NUM_TOKENS, epochs=500, lr=0.001):
+    # Modified from NanoGPT https://github.com/karpathy/nanoGPT/ Under MIT License
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens=1, temperature=1.0, top_k=None):
+        """
+        Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
+        the sequence max_new_tokens times, feeding the predictions back into the model each time.
+        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+        """
+        for _ in range(max_new_tokens):
+            # if the sequence context is growing too long we must crop it at block_size
+            idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size:]
+            # forward the model to get the logits for the index in the sequence
+            logits = self(idx_cond)
+            # pluck the logits at the final step and scale by desired temperature
+            logits = logits[:, -1, :] / temperature
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+            # sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1)
+            # append sampled index to the running sequence and continue
+            #idx = torch.cat((idx, idx_next), dim=1)
+
+        return idx_next
+        
+def train_text(model, dataloader, NUM_TOKENS, epochs=50, lr=0.001):
     model.train()
     
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -46,51 +87,6 @@ def train_text(model, dataloader, NUM_TOKENS, epochs=500, lr=0.001):
         avg_epoch_loss = epoch_loss / len(dataloader)
         print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_epoch_loss}")
 
-def beam_search(model, input_tokens, beam_width=5, num_tokens_to_generate=1):
-    """
-    Beam search for next token prediction.
-    Args:
-    - model: a TextTransformer instance
-    - input_tokens: torch tensor of shape (sequence_length), input to the model
-    - beam_width: number of sequences to consider at each generation step
-    - num_tokens_to_generate: how many tokens to generate (usually set to 1 for next token prediction)
-
-    Returns:
-    - best_sequences: the best sequences based on their scores
-    """
-    
-    # Initial sequences (tokens) and scores
-    sequence = input_tokens
-    scores = torch.zeros((1,)).to(input_tokens.device)  # Initialize scores to 0 for the starting sequence
-    
-    for _ in range(num_tokens_to_generate):
-        all_candidates = []
-        
-        # Predict next token for each sequence in the beam
-        #for i in range(len(sequences)):
-        seq = sequence
-        seq_score = scores
-        
-        # Forward pass through the model
-        logits = model(seq.unsqueeze(0)) # Only consider logits for the last token
-        prob = torch.nn.functional.softmax(logits, dim=-1)
-        top_probs, top_ix = prob.topk(beam_width)  # Get top k probabilities and their indices
-        
-        # Create new candidate sequence
-        for j in range(beam_width):
-            new_seq = torch.cat([seq, top_ix[0][j].unsqueeze(0)])
-            new_score = seq_score + torch.log(top_probs[0][j])
-            all_candidates.append((new_seq, new_score))
-                
-        # Sort all candidates by score
-        ordered = sorted(all_candidates, key=lambda tup: tup[1], reverse=True)
-        
-        # Select top sequence based on scores
-        sequence = torch.stack([tup[0] for tup in ordered[:beam_width]])
-        scores = torch.stack([tup[1] for tup in ordered[:beam_width]])
-        
-    best_sequence = sequence
-    return best_sequence
 
 if __name__ == "__main__":
     import sys
@@ -151,7 +147,7 @@ if __name__ == "__main__":
     
 
     # Instantiate and train the model
-    model = TextTransformer(vocab_size=NUM_TOKENS).to(device)
+    model = TextTransformer(vocab_size=NUM_TOKENS, block_size=MAX_SEQ_LEN).to(device)
     print(X.shape)
     print(Y.shape)
 
@@ -179,10 +175,19 @@ if __name__ == "__main__":
             
             for i in range(20):
                 mask = None#generate_mask(x, pad_idx)
-                #outputs = model(x).argmax(dim=-1).squeeze()
-                outputs = beam_search(model, x)
+                #outputs = model(x.unsqueeze(0)).argmax(dim=-1).squeeze()
+                #outputs_list = [outputs.cpu().tolist()]
                 
-                outputs_list = [outputs[0][-1].cpu().tolist()]
+                #outputs = beam_search(model, x)
+                #outputs = beam_search_recursive(model, x)
+                #outputs_list = [outputs[0][-1].cpu().tolist()]
+                
+                
+                max_new_tokens = 1
+                temperature = 1.0
+                top_k = None
+                outputs = model.generate(x.unsqueeze(0), max_new_tokens, temperature=temperature, top_k=top_k)
+                outputs_list = outputs[0].tolist()
                 
                 recon = tokenizer.indices_to_text(outputs_list)
                 print(recon, end='')
