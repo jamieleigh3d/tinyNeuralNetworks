@@ -25,7 +25,7 @@ class TextTransformer(nn.Module):
         # TODO: Tie embedding weights with fc weights
         
     def forward(self, x):
-        
+        #TODO: Add mask parameter
         emb = self.embedding(x)
         
         t = x.shape[1]
@@ -77,6 +77,7 @@ def train_text(model, dataloader, NUM_TOKENS, epochs=50, lr=0.001):
         epoch_loss = 0
         for batch_idx, (x, xm, y) in enumerate(dataloader):
             optimizer.zero_grad()
+            #TODO: support mask xm
             outputs = model(x)
             
             loss = F.cross_entropy(outputs.view(-1, NUM_TOKENS), y.view(-1))
@@ -113,8 +114,10 @@ if __name__ == "__main__":
     #    "See spot run. Run spot run!"
     #]
 
-    input_texts = [ "Got the milk?" ]
-
+    #input_texts = [ "Got the milk?" ]
+    #input_texts = [ "Got milk?" ]
+    input_texts = [ "Go buy milk?" ]
+    
     print(len(input_texts))
     
     #data, labels = generate_random_data()
@@ -175,8 +178,8 @@ if __name__ == "__main__":
             
             for i in range(20):
                 mask = None#generate_mask(x, pad_idx)
-                #outputs = model(x.unsqueeze(0)).argmax(dim=-1).squeeze()
-                #outputs_list = [outputs.cpu().tolist()]
+                # outputs = model(x.unsqueeze(0)).argmax(dim=-1).squeeze()
+                # outputs_list = [outputs.cpu().tolist()]
                 
                 #outputs = beam_search(model, x)
                 #outputs = beam_search_recursive(model, x)
@@ -184,8 +187,8 @@ if __name__ == "__main__":
                 
                 
                 max_new_tokens = 1
-                temperature = 1.0
-                top_k = None
+                temperature = 0.01
+                top_k = 3
                 outputs = model.generate(x.unsqueeze(0), max_new_tokens, temperature=temperature, top_k=top_k)
                 outputs_list = outputs[0].tolist()
                 
@@ -194,7 +197,7 @@ if __name__ == "__main__":
                 
                 # Check for <EOS>
                 if end_seq_idx in outputs_list:
-                    print("\nEOS")
+                    #print("\nEOS")
                     break
                 # Cycle for next round
                 #print(tokens)

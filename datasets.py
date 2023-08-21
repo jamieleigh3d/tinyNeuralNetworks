@@ -37,21 +37,38 @@ class TextDataset():
         target_sequences = []
         for t in training_tokens:
         
-            for s in range(1,seq_len+1):
+            # Initial variable length padding until seq_len
+            for s in range(0,seq_len):
+                #Start in the first character
+                i=0
+                sequence = t[i:i+s]
+                next = [t[i+s]]
+                
+                # Pad the sequence
+                while len(sequence) < seq_len:
+                    sequence.insert(0, pad_idx)
+                
+                mask = self.generate_mask(sequence, pad_idx)
+                input_sequences.append(sequence)
+                input_masks.append(mask)
+                target_sequences.append(next)
             
-                #s = seq_len
-                for i in range(len(t) - s):
-                    sequence = t[i:i+s]
-                    next = [t[i+s]]
-                    
-                    # Pad the sequence
-                    while len(sequence) < seq_len:
-                        sequence.insert(0, pad_idx)
-                    
-                    mask = self.generate_mask(sequence, pad_idx)
-                    input_sequences.append(sequence)
-                    input_masks.append(mask)
-                    target_sequences.append(next)
+            # Sliding a window through t if t > seq_len
+            # Fixed seq_len
+            s = seq_len
+            # Start on the ith character
+            for i in range(len(t) - s):
+                sequence = t[i:i+s]
+                next = [t[i+s]]
+                
+                # Pad the sequence
+                #while len(sequence) < seq_len:
+                #    sequence.insert(0, pad_idx)
+                
+                mask = self.generate_mask(sequence, pad_idx)
+                input_sequences.append(sequence)
+                input_masks.append(mask)
+                target_sequences.append(next)
 
         return input_sequences, input_masks, target_sequences
 
