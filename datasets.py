@@ -47,6 +47,7 @@ class TextDataset():
                 # Pad the sequence
                 while len(sequence) < seq_len:
                     sequence.insert(0, pad_idx)
+                    #sequence.append(pad_idx)
                 
                 mask = self.generate_mask(sequence, pad_idx)
                 input_sequences.append(sequence)

@@ -10,19 +10,28 @@ import lrschedulers
 from datasets import TextDataset, escape
 
 class TextTransformer(nn.Module):
-    def __init__(self, vocab_size, block_size=1024, embed_dim=64, num_heads=4, num_decoder_layers=2):
+    def __init__(self, vocab_size, block_size=1024, embed_dim=64, num_heads=4, num_decoder_layers=2, dropout=0.1):
         super(TextTransformer, self).__init__()
         
         self.block_size = block_size
         self.embedding = nn.Embedding(vocab_size, embed_dim)
         self.pos_embedding = nn.Embedding(block_size, embed_dim)
-        self.transformer = nn.Transformer(
-            d_model=embed_dim, 
-            nhead=num_heads, 
-            num_decoder_layers=num_decoder_layers
-        )
+        self.dropout = nn.Dropout(dropout)
+        
+        # self.transformer = nn.Transformer(
+            # d_model=embed_dim, 
+            # nhead=num_heads, 
+            # num_encoder_layers=0,
+            # num_decoder_layers=num_decoder_layers,
+        # )
+        
+        decoder_layer = nn.TransformerDecoderLayer(d_model=embed_dim, nhead=num_heads)
+        self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_decoder_layers)
+        
         self.fc = nn.Linear(embed_dim, vocab_size)
-        # TODO: Tie embedding weights with fc weights
+        # Tie embedding weights with fc weights
+        self.fc.weight = self.embedding.weight
+
         
     def forward(self, x):
         #TODO: Add mask parameter
@@ -32,22 +41,22 @@ class TextTransformer(nn.Module):
         positions = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
         pos_emb = self.pos_embedding(positions)
         
-        emb = emb + pos_emb
+        emb = self.dropout(emb + pos_emb)
         
-        #TODO: Add dropout layer here
-        
-        x = self.transformer.encoder(emb)
-        x = self.fc(x[:, [-1], :]) # taking only the last token for prediction, [-1] preserving the dimensionality
+        x = self.transformer_decoder(emb, emb)
+        # taking only the last token for prediction, [-1] preserving the dimensionality
+        x = self.fc(x[:, [-1], :])
         return x
 
     # Modified from NanoGPT https://github.com/karpathy/nanoGPT/ Under MIT License
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens=1, temperature=1.0, top_k=None):
+    def generate(self, idx, max_new_tokens=1, temperature=1.0, top_k=None, eos_token=None):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
+        #generated_tokens = []
         for _ in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size:]
@@ -64,9 +73,12 @@ class TextTransformer(nn.Module):
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
-            #idx = torch.cat((idx, idx_next), dim=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+            
+            if eos_token and idx_next.item() == eos_token:
+                break
 
-        return idx_next
+        return idx
         
 def train_text(model, dataloader, NUM_TOKENS, epochs=50, lr=0.001):
     model.train()
@@ -120,7 +132,6 @@ if __name__ == "__main__":
     
     print(len(input_texts))
     
-    #data, labels = generate_random_data()
     tokenizer = T.UTF8Tokenizer()
     dataset = TextDataset(tokenizer)
     
@@ -171,26 +182,28 @@ if __name__ == "__main__":
             
             while len(tokens) < MAX_SEQ_LEN:
                 tokens.insert(0, pad_idx)
+                #tokens.append(pad_idx)
             
             recon = tokenizer.indices_to_text(tokens)
             x = torch.tensor(tokens).to(device)
             print(f"[{recon}]",end='')
             
-            for i in range(20):
+            for i in range(10):
                 mask = None#generate_mask(x, pad_idx)
                 # outputs = model(x.unsqueeze(0)).argmax(dim=-1).squeeze()
                 # outputs_list = [outputs.cpu().tolist()]
                 
-                #outputs = beam_search(model, x)
-                #outputs = beam_search_recursive(model, x)
-                #outputs_list = [outputs[0][-1].cpu().tolist()]
-                
-                
-                max_new_tokens = 1
+                max_new_tokens = 20
                 temperature = 0.01
                 top_k = 3
-                outputs = model.generate(x.unsqueeze(0), max_new_tokens, temperature=temperature, top_k=top_k)
-                outputs_list = outputs[0].tolist()
+                outputs = model.generate(
+                    x.unsqueeze(0), 
+                    max_new_tokens, 
+                    temperature=temperature, 
+                    top_k=top_k,
+                    eos_token=end_seq_idx)
+                #print(outputs)
+                outputs_list = outputs[0].tolist()[len(tokens):]
                 
                 recon = tokenizer.indices_to_text(outputs_list)
                 print(recon, end='')
