@@ -36,9 +36,9 @@ class TextDataset():
         input_masks = []
         target_sequences = []
         for t in training_tokens:
-        
+            
             # Initial variable length padding until seq_len
-            for s in range(0,seq_len):
+            for s in range(0,min(seq_len,len(t))):
                 #Start in the first character
                 i=0
                 sequence = t[i:i+s]
