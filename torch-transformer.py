@@ -28,7 +28,11 @@ class TextTransformer(nn.Module):
             # num_decoder_layers=num_decoder_layers,
         # )
         
-        decoder_layer = nn.TransformerDecoderLayer(d_model=embed_dim, nhead=num_heads)
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=embed_dim, 
+            nhead=num_heads,
+            batch_first = True,
+        )
         self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_decoder_layers)
         
         self.fc = nn.Linear(embed_dim, vocab_size)
@@ -36,7 +40,7 @@ class TextTransformer(nn.Module):
         self.fc.weight = self.embedding.weight
         
         
-    def forward(self, x, mask=None):
+    def forward(self, x, padding_mask=None, look_ahead_mask=None):
         emb = self.embedding(x)
         
         t = x.shape[1]
@@ -47,7 +51,13 @@ class TextTransformer(nn.Module):
         emb = self.dropout(emb + pos_emb)
         
         #TODO: Support masking
-        x = self.transformer_decoder(emb, emb)
+        x = self.transformer_decoder(
+            tgt = emb, 
+            memory = emb, 
+            tgt_mask = look_ahead_mask,
+            memory_mask = look_ahead_mask,
+            tgt_key_padding_mask = padding_mask,
+        )
         # taking only the last token for prediction, [-1] preserving the dimensionality
         x = self.fc(x)
         return x
@@ -65,7 +75,7 @@ class TextTransformer(nn.Module):
 
     # Modified from NanoGPT https://github.com/karpathy/nanoGPT/ Under MIT License
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens=1, temperature=1.0, top_k=None, eos_token=None):
+    def generate(self, idx, max_new_tokens=1, temperature=1.0, top_k=None, eos_token=None, pad_token=None):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
@@ -75,8 +85,13 @@ class TextTransformer(nn.Module):
         for _ in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size:]
-            # forward the model to get the logits for the index in the sequence
-            logits = self(idx_cond)
+            
+            if pad_token is not None:
+                padding_mask, _ = model.create_masks(idx_cond, pad_token)
+                logits = self(idx_cond, None)
+            else:
+                # forward the model to get the logits for the index in the sequence
+                logits = self(idx_cond)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature
             # optionally crop the logits to only the top k options
@@ -96,12 +111,16 @@ class TextTransformer(nn.Module):
         return idx
         
     @staticmethod
-    def create_masks(src, src_pad):
+    def create_masks(x, pad_token):
         """Create padding masks for the src sequence."""
-        src_mask = (src != src_pad)
+        padding_mask = (x == pad_token).to(x.device)
+        tgt_len = x.shape[1]
+        look_ahead_mask = nn.Transformer.generate_square_subsequent_mask(tgt_len, x.device)
+        #look_ahead_mask = torch.triu(torch.ones((tgt_len, tgt_len)), diagonal=1).bool().to(x.device)
+        #print(f"x.shape: {x.shape} pm: {padding_mask.shape} lam: {look_ahead_mask.shape}")
+        #print(f"x: {x}\npm: {padding_mask}\nlam: {look_ahead_mask}")
         
-        #print(f"mask shape: {src_mask.shape}")
-        return src_mask
+        return padding_mask, look_ahead_mask
 
 def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
     model.train()
@@ -112,8 +131,12 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
         epoch_loss = 0
         for batch_idx, (x, y) in enumerate(dataloader):
             optimizer.zero_grad()
-            mask = model.create_masks(x, pad_token)
-            outputs = model(x, mask)
+            padding_mask, look_ahead_mask = model.create_masks(x, pad_token)
+            
+            outputs = model(
+                x,
+                padding_mask=None,
+                look_ahead_mask=look_ahead_mask)
             
             loss = F.cross_entropy(outputs.view(-1, NUM_TOKENS), y.view(-1))
             loss.backward()
@@ -222,23 +245,25 @@ if __name__ == "__main__":
                 #tokens.append(pad_idx)
             
             recon = tokenizer.indices_to_text(tokens)
-            x = torch.tensor(tokens).to(device)
+            x = torch.tensor(tokens).unsqueeze(0).to(device)
             print(f"[{recon}]",end='')
             
             for i in range(20):
-                #mask = model.create_masks(x.unsqueeze(0), pad_idx)
-                # outputs = model(x.unsqueeze(0)).argmax(dim=-1).squeeze()
+                
+                # outputs = model(x).argmax(dim=-1).squeeze()
                 # outputs_list = outputs.cpu().tolist()[-1:]
                 
                 max_new_tokens = 20
                 temperature = 0.01
                 top_k = 5
                 outputs = model.generate(
-                    x.unsqueeze(0), 
+                    x, 
                     max_new_tokens, 
                     temperature=temperature, 
                     top_k=top_k,
-                    eos_token=end_seq_idx)
+                    eos_token=end_seq_idx,
+                    pad_token=pad_idx,
+                )
                 
                 outputs_list = outputs[0].tolist()[len(tokens):]
                 
@@ -252,4 +277,4 @@ if __name__ == "__main__":
                 #print(tokens)
                 tokens = tokens[1:MAX_SEQ_LEN]
                 tokens.append(outputs_list[0])
-                x = torch.tensor(tokens).to(device)
+                x = torch.tensor(tokens).unsqueeze(0).to(device)
