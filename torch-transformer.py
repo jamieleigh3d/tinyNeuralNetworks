@@ -50,7 +50,6 @@ class TextTransformer(nn.Module):
         
         emb = self.dropout(emb + pos_emb)
         
-        #TODO: Support masking
         x = self.transformer_decoder(
             tgt = emb, 
             memory = emb, 
@@ -58,7 +57,6 @@ class TextTransformer(nn.Module):
             memory_mask = look_ahead_mask,
             tgt_key_padding_mask = padding_mask,
         )
-        
         # taking only the last token for prediction, [-1] preserving the dimensionality
         x = self.fc(x)
         return x
@@ -88,9 +86,8 @@ class TextTransformer(nn.Module):
             idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size:]
             
             if pad_token is not None:
-                # Temporarily disable padding_mask
-                #padding_mask, _ = model.create_masks(idx_cond, pad_token)
-                logits = self(idx_cond, None)
+                padding_mask, _ = model.create_masks(idx_cond, pad_token)
+                logits = self(idx_cond, padding_mask=None)
             else:
                 # forward the model to get the logits for the index in the sequence
                 logits = self(idx_cond)
@@ -100,6 +97,7 @@ class TextTransformer(nn.Module):
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
+            
             # apply softmax to convert logits to (normalized) probabilities
             probs = F.softmax(logits, dim=-1)
             # sample from the distribution
@@ -115,7 +113,7 @@ class TextTransformer(nn.Module):
     @staticmethod
     def create_masks(x, pad_token):
         """Create padding masks for the src sequence."""
-        padding_mask = (x == pad_token).to(x.device)
+        padding_mask = (x == pad_token).bool().to(x.device)
         tgt_len = x.shape[1]
         #look_ahead_mask = nn.Transformer.generate_square_subsequent_mask(tgt_len, x.device)
         look_ahead_mask = torch.triu(torch.ones((tgt_len, tgt_len)), diagonal=1).bool().to(x.device)
@@ -177,8 +175,8 @@ if __name__ == "__main__":
     #]
 
     #input_texts = [ "Got the milk?" ]
-    #input_texts = [ "Got milk?" ]
-    input_texts = [ "Go buy milk?" ]
+    input_texts = [ "Got milk?" ]
+    #input_texts = [ "Go buy milk?" ]
     #input_texts = [ "Dog" ]
     
     #obj_data = abo.load_objects()[:10]
@@ -207,7 +205,7 @@ if __name__ == "__main__":
     # Hyperparameters
     BATCH_SIZE = 128
     NUM_TOKENS = tokenizer.vocab_size()
-    epochs = 50
+    epochs = 100
     embed_dim=16
     num_heads=4
     num_layers=4
@@ -244,7 +242,7 @@ if __name__ == "__main__":
         while True:
 
             print()
-            prompt = input(">")[:MAX_SEQ_LEN]
+            prompt = input(">")[-MAX_SEQ_LEN:]
             tokens = tokenizer.text_to_indices(prompt)
             
             while len(tokens) < MAX_SEQ_LEN:
@@ -255,7 +253,7 @@ if __name__ == "__main__":
             x = torch.tensor(tokens).unsqueeze(0).to(device)
             print(f"[{recon}]",end='')
             
-            for i in range(20):
+            for i in range(1):
                 
                 # outputs = model(x).argmax(dim=-1).squeeze()
                 # outputs_list = outputs.cpu().tolist()[-1:]
@@ -272,9 +270,9 @@ if __name__ == "__main__":
                     pad_token=pad_idx,
                 )
                 
-                outputs_list = outputs[0].tolist()[len(tokens):]
+                outputs_list = outputs[0].tolist()
                 
-                recon = tokenizer.indices_to_text(outputs_list)
+                recon = tokenizer.indices_to_text(outputs_list[len(tokens):])
                 print(recon, end='')
                 
                 # Check for <EOS>
@@ -282,6 +280,9 @@ if __name__ == "__main__":
                     break
                 # Cycle for next round
                 #print(tokens)
-                tokens = tokens[1:MAX_SEQ_LEN]
-                tokens.append(outputs_list[0])
+                tokens = outputs_list
+                
+                while len(tokens) < MAX_SEQ_LEN:
+                    tokens.insert(0, pad_idx)
+                    #tokens.append(pad_idx)
                 x = torch.tensor(tokens).unsqueeze(0).to(device)
