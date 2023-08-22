@@ -3,11 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
-
+import math
 
 import tokenization as T
 import lrschedulers
 from datasets import TextDataset, escape
+import abo as abo
 
 class TextTransformer(nn.Module):
     def __init__(self, vocab_size, block_size=1024, embed_dim=64, num_heads=4, num_decoder_layers=2, dropout=0.1):
@@ -17,6 +18,8 @@ class TextTransformer(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embed_dim)
         self.pos_embedding = nn.Embedding(block_size, embed_dim)
         self.dropout = nn.Dropout(dropout)
+        
+        self.pos_enc = self.positional_encoding(block_size, embed_dim)
         
         # self.transformer = nn.Transformer(
             # d_model=embed_dim, 
@@ -31,22 +34,34 @@ class TextTransformer(nn.Module):
         self.fc = nn.Linear(embed_dim, vocab_size)
         # Tie embedding weights with fc weights
         self.fc.weight = self.embedding.weight
-
         
-    def forward(self, x):
-        #TODO: Add mask parameter
+        
+    def forward(self, x, mask=None):
         emb = self.embedding(x)
         
         t = x.shape[1]
         positions = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
-        pos_emb = self.pos_embedding(positions)
+        #pos_emb = self.pos_embedding(positions)
+        pos_emb = self.pos_enc[:, :emb.size(1)].to(x.device)
         
         emb = self.dropout(emb + pos_emb)
         
+        #TODO: Support masking
         x = self.transformer_decoder(emb, emb)
         # taking only the last token for prediction, [-1] preserving the dimensionality
         x = self.fc(x[:, [-1], :])
         return x
+        
+    def positional_encoding(self, seq_len, d_model):
+        position = torch.arange(seq_len).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+        
+        pos_enc = torch.empty(seq_len, d_model)
+        pos_enc[:, 0::2] = torch.sin(position * div_term)
+        pos_enc[:, 1::2] = torch.cos(position * div_term)
+        
+        pos_enc = pos_enc.unsqueeze(0)
+        return pos_enc
 
     # Modified from NanoGPT https://github.com/karpathy/nanoGPT/ Under MIT License
     @torch.no_grad()
@@ -80,17 +95,25 @@ class TextTransformer(nn.Module):
 
         return idx
         
-def train_text(model, dataloader, NUM_TOKENS, epochs=50, lr=0.001):
+    @staticmethod
+    def create_masks(src, src_pad):
+        """Create padding masks for the src sequence."""
+        src_mask = (src != src_pad)
+        
+        #print(f"mask shape: {src_mask.shape}")
+        return src_mask
+
+def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
     model.train()
     
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     for epoch in range(epochs):
         epoch_loss = 0
-        for batch_idx, (x, xm, y) in enumerate(dataloader):
+        for batch_idx, (x, y) in enumerate(dataloader):
             optimizer.zero_grad()
-            #TODO: support mask xm
-            outputs = model(x)
+            mask = model.create_masks(x, pad_token)
+            outputs = model(x, mask)
             
             loss = F.cross_entropy(outputs.view(-1, NUM_TOKENS), y.view(-1))
             loss.backward()
@@ -128,14 +151,20 @@ if __name__ == "__main__":
 
     #input_texts = [ "Got the milk?" ]
     #input_texts = [ "Got milk?" ]
-    input_texts = [ "Go buy milk?" ]
+    #input_texts = [ "Go buy milk?" ]
+    
+    obj_data = abo.load_objects()[:100]
+    
+    input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
+    
+    #[print(t) for t in input_texts]
     
     print(len(input_texts))
     
     tokenizer = T.UTF8Tokenizer()
     dataset = TextDataset(tokenizer)
     
-    MAX_SEQ_LEN = 8
+    MAX_SEQ_LEN = 32
     
     input_sequences, input_masks, target_sequences = dataset.load(input_texts, seq_len=MAX_SEQ_LEN)
     
@@ -154,23 +183,29 @@ if __name__ == "__main__":
     
     # Prepare data for DataLoader
     X = torch.tensor(input_sequences).to(device)
-    Xm = torch.tensor(input_masks, dtype=bool).to(device)
     Y = torch.tensor(target_sequences).to(device)
-    tensor_dataset = TensorDataset(X, Xm, Y)
+    tensor_dataset = TensorDataset(X, Y)
     dataloader = DataLoader(tensor_dataset, batch_size=BATCH_SIZE, shuffle=True)
     
 
     # Instantiate and train the model
-    model = TextTransformer(vocab_size=NUM_TOKENS, block_size=MAX_SEQ_LEN).to(device)
+    model = TextTransformer(
+        vocab_size=NUM_TOKENS, 
+        block_size=MAX_SEQ_LEN,
+        embed_dim=64, 
+        num_heads=4, 
+        num_decoder_layers=4, 
+        dropout=0.1
+    ).to(device)
     print(X.shape)
     print(Y.shape)
 
-    train_text(model, dataloader, NUM_TOKENS)
-    
-    print("Training finished!")
-    
     end_seq_idx = tokenizer.special_token_to_index(tokenizer.eos_token)
     pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
+    
+    train_text(model, dataloader, NUM_TOKENS, pad_idx, epochs=50)
+    
+    print("Training finished!")
     
     model.eval()
     with torch.no_grad():
@@ -189,9 +224,9 @@ if __name__ == "__main__":
             print(f"[{recon}]",end='')
             
             for i in range(10):
-                mask = None#generate_mask(x, pad_idx)
-                # outputs = model(x.unsqueeze(0)).argmax(dim=-1).squeeze()
-                # outputs_list = [outputs.cpu().tolist()]
+                #mask = model.create_masks(x.unsqueeze(0), pad_idx)
+                #outputs = model(x.unsqueeze(0)).argmax(dim=-1).squeeze()
+                #outputs_list = [outputs.cpu().tolist()]
                 
                 max_new_tokens = 20
                 temperature = 0.01
@@ -202,7 +237,7 @@ if __name__ == "__main__":
                     temperature=temperature, 
                     top_k=top_k,
                     eos_token=end_seq_idx)
-                #print(outputs)
+                
                 outputs_list = outputs[0].tolist()[len(tokens):]
                 
                 recon = tokenizer.indices_to_text(outputs_list)
