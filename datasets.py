@@ -42,13 +42,17 @@ class TextDataset():
                 #Start in the first character
                 i=0
                 sequence = t[i:i+s]
-                next = [t[i+s]]
+                next = t[i:i+s+1]
                 
                 # Pad the sequence
                 while len(sequence) < seq_len:
                     sequence.insert(0, pad_idx)
                     #sequence.append(pad_idx)
                 
+                while len(next) < seq_len:
+                    next.insert(0, pad_idx)
+                    #next.append(pad_idx)
+
                 mask = self.generate_mask(sequence, pad_idx)
                 input_sequences.append(sequence)
                 input_masks.append(mask)
@@ -59,13 +63,8 @@ class TextDataset():
             s = seq_len
             # Start on the ith character
             for i in range(len(t) - s):
-                sequence = t[i:i+s]
-                next = [t[i+s]]
-                
-                # Pad the sequence
-                #while len(sequence) < seq_len:
-                #    sequence.insert(0, pad_idx)
-                
+                sequence = t[i : i+s]
+                next = t[i+1 : i+s+1]
                 mask = self.generate_mask(sequence, pad_idx)
                 input_sequences.append(sequence)
                 input_masks.append(mask)

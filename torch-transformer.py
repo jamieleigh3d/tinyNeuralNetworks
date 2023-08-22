@@ -49,7 +49,7 @@ class TextTransformer(nn.Module):
         #TODO: Support masking
         x = self.transformer_decoder(emb, emb)
         # taking only the last token for prediction, [-1] preserving the dimensionality
-        x = self.fc(x[:, [-1], :])
+        x = self.fc(x)
         return x
         
     def positional_encoding(self, seq_len, d_model):
@@ -90,7 +90,7 @@ class TextTransformer(nn.Module):
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
             
-            if eos_token and idx_next.item() == eos_token:
+            if eos_token is not None and idx_next.item() == eos_token:
                 break
 
         return idx
@@ -126,6 +126,7 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
 
 if __name__ == "__main__":
     import sys
+    import torch_utils
     
     sys.stdout.reconfigure(encoding='utf-8')
 
@@ -133,6 +134,7 @@ if __name__ == "__main__":
     print(f"Using {device_string}")
     device = torch.device(device_string)
     
+    torch_utils.seed_everywhere(0)
     
     # Dummy dataset
     input_texts = [
@@ -150,21 +152,21 @@ if __name__ == "__main__":
     #]
 
     #input_texts = [ "Got the milk?" ]
-    #input_texts = [ "Got milk?" ]
+    input_texts = [ "Got milk?" ]
     #input_texts = [ "Go buy milk?" ]
+    #input_texts = [ "Dog" ]
     
-    obj_data = abo.load_objects()[:100]
+    #obj_data = abo.load_objects()[:10]
+    #input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
-    input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
-    
-    #[print(t) for t in input_texts]
+    [print(t) for t in input_texts]
     
     print(len(input_texts))
     
     tokenizer = T.UTF8Tokenizer()
     dataset = TextDataset(tokenizer)
     
-    MAX_SEQ_LEN = 32
+    MAX_SEQ_LEN = 8
     
     input_sequences, input_masks, target_sequences = dataset.load(input_texts, seq_len=MAX_SEQ_LEN)
     
@@ -192,10 +194,10 @@ if __name__ == "__main__":
     model = TextTransformer(
         vocab_size=NUM_TOKENS, 
         block_size=MAX_SEQ_LEN,
-        embed_dim=64, 
+        embed_dim=16, 
         num_heads=4, 
         num_decoder_layers=4, 
-        dropout=0.1
+        dropout=0.0
     ).to(device)
     print(X.shape)
     print(Y.shape)
@@ -203,7 +205,7 @@ if __name__ == "__main__":
     end_seq_idx = tokenizer.special_token_to_index(tokenizer.eos_token)
     pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
     
-    train_text(model, dataloader, NUM_TOKENS, pad_idx, epochs=50)
+    train_text(model, dataloader, NUM_TOKENS, pad_idx, epochs=100)
     
     print("Training finished!")
     
@@ -223,14 +225,14 @@ if __name__ == "__main__":
             x = torch.tensor(tokens).to(device)
             print(f"[{recon}]",end='')
             
-            for i in range(10):
+            for i in range(20):
                 #mask = model.create_masks(x.unsqueeze(0), pad_idx)
-                #outputs = model(x.unsqueeze(0)).argmax(dim=-1).squeeze()
-                #outputs_list = [outputs.cpu().tolist()]
+                # outputs = model(x.unsqueeze(0)).argmax(dim=-1).squeeze()
+                # outputs_list = outputs.cpu().tolist()[-1:]
                 
                 max_new_tokens = 20
                 temperature = 0.01
-                top_k = 3
+                top_k = 5
                 outputs = model.generate(
                     x.unsqueeze(0), 
                     max_new_tokens, 
@@ -245,7 +247,6 @@ if __name__ == "__main__":
                 
                 # Check for <EOS>
                 if end_seq_idx in outputs_list:
-                    #print("\nEOS")
                     break
                 # Cycle for next round
                 #print(tokens)
