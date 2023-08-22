@@ -14,7 +14,7 @@ class TextDataset():
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
         
-    def load(self, input_texts, seq_len=8):
+    def load(self, input_texts, seq_len=8, use_padding=True):
         tokenizer = self.tokenizer
         
         tokenizer.build_vocab(input_texts)
@@ -30,7 +30,7 @@ class TextDataset():
         str_list = tokenizer.indices_to_texts(training_tokens)
         #for idx, str in enumerate(str_list):
         #    print(f"{idx}: '{escape(str)}' => {training_tokens[idx]}")
-        print()
+        
         
         input_sequences = []
         input_masks = []
@@ -38,25 +38,26 @@ class TextDataset():
         for t in training_tokens:
             
             # Initial variable length padding until seq_len
-            for s in range(1,min(seq_len,len(t))):
-                #Start in the first character
-                i=0
-                sequence = t[i:i+s]
-                next = t[i:i+s+1]
-                
-                # Pad the sequence
-                while len(sequence) < seq_len:
-                    sequence.insert(0, pad_idx)
-                    #sequence.append(pad_idx)
-                
-                while len(next) < seq_len:
-                    next.insert(0, pad_idx)
-                    #next.append(pad_idx)
+            if use_padding:
+                for s in range(1,min(seq_len,len(t))):
+                    #Start in the first character
+                    i=0
+                    sequence = t[i:i+s]
+                    next = t[i:i+s+1]
+                    
+                    # Pad the sequence
+                    while len(sequence) < seq_len:
+                        sequence.insert(0, pad_idx)
+                        #sequence.append(pad_idx)
+                    
+                    while len(next) < seq_len:
+                        next.insert(0, pad_idx)
+                        #next.append(pad_idx)
 
-                mask = self.generate_mask(sequence, pad_idx)
-                input_sequences.append(sequence)
-                input_masks.append(mask)
-                target_sequences.append(next)
+                    mask = self.generate_mask(sequence, pad_idx)
+                    input_sequences.append(sequence)
+                    input_masks.append(mask)
+                    target_sequences.append(next)
             
             # Sliding a window through t if t > seq_len
             # Fixed seq_len
@@ -69,6 +70,26 @@ class TextDataset():
                 input_sequences.append(sequence)
                 input_masks.append(mask)
                 target_sequences.append(next)
+                
+            if use_padding:
+                s = seq_len
+                # Start on the ith character
+                for i in range(len(t) - s,len(t)):
+                    sequence = t[i : i+s]
+                    next = t[i+1 : i+s+1]
+                    
+                    
+                    # Pad the sequence after the EOS
+                    while len(sequence) < seq_len:
+                        sequence.append(pad_idx)
+                    
+                    while len(next) < seq_len:
+                        next.append(pad_idx)
+                        
+                    mask = self.generate_mask(sequence, pad_idx)
+                    input_sequences.append(sequence)
+                    input_masks.append(mask)
+                    target_sequences.append(next)
 
         return input_sequences, input_masks, target_sequences
 
