@@ -59,22 +59,23 @@ class TextDataset():
                     input_masks.append(mask)
                     target_sequences.append(next)
             
-            # Sliding a window through t if t > seq_len
-            # Fixed seq_len
-            s = seq_len
-            # Start on the ith character
-            for i in range(len(t) - s):
-                sequence = t[i : i+s]
-                next = t[i+1 : i+s+1]
-                mask = self.generate_mask(sequence, pad_idx)
-                input_sequences.append(sequence)
-                input_masks.append(mask)
-                target_sequences.append(next)
+            if len(t) > s:
+                # Sliding a window through t if t > seq_len
+                # Fixed seq_len
+                s = seq_len
+                # Start on the ith character
+                for i in range(len(t) - s):
+                    sequence = t[i : i+s]
+                    next = t[i+1 : i+s+1]
+                    mask = self.generate_mask(sequence, pad_idx)
+                    input_sequences.append(sequence)
+                    input_masks.append(mask)
+                    target_sequences.append(next)
                 
             if use_padding:
                 s = seq_len
                 # Start on the ith character
-                for i in range(len(t) - s,len(t)):
+                for i in range(max(0,len(t) - s),len(t)):
                     sequence = t[i : i+s]
                     next = t[i+1 : i+s+1]
                     
