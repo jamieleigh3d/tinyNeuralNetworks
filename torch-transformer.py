@@ -71,6 +71,12 @@ class TextTransformer(nn.Module):
         
         pos_enc = pos_enc.unsqueeze(0)
         return pos_enc
+        
+    def learnable_params(self):
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def total_params(self):
+        return sum(p.numel() for p in self.parameters())
 
     # Modified from NanoGPT https://github.com/karpathy/nanoGPT/ Under MIT License
     @torch.no_grad()
@@ -179,17 +185,18 @@ if __name__ == "__main__":
     #input_texts = [ "Go buy milk?" ]
     #input_texts = [ "Dog" ]
     
-    #obj_data = abo.load_objects()[:10]
-    #input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
+    obj_data = abo.load_objects(1000)
+    input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
     [print(t) for t in input_texts]
     
     print(len(input_texts))
     
-    tokenizer = T.UTF8Tokenizer()
+    #tokenizer = T.UTF8Tokenizer()
+    tokenizer = T.WordTokenizer()
     dataset = TextDataset(tokenizer)
     
-    MAX_SEQ_LEN = 8
+    MAX_SEQ_LEN = 32
     
     input_sequences, input_masks, target_sequences = dataset.load(input_texts, seq_len=MAX_SEQ_LEN)
     
@@ -205,11 +212,11 @@ if __name__ == "__main__":
     # Hyperparameters
     BATCH_SIZE = 128
     NUM_TOKENS = tokenizer.vocab_size()
-    epochs = 100
-    embed_dim=16
-    num_heads=4
-    num_layers=4
-    dropout=0.0
+    epochs = 25
+    embed_dim=64
+    num_heads=8
+    num_layers=8
+    dropout=0.1
     
     # Prepare data for DataLoader
     X = torch.tensor(input_sequences).to(device)
@@ -230,6 +237,8 @@ if __name__ == "__main__":
     print(X.shape)
     print(Y.shape)
 
+    print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
+    
     end_seq_idx = tokenizer.special_token_to_index(tokenizer.eos_token)
     pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
     
@@ -245,44 +254,30 @@ if __name__ == "__main__":
             prompt = input(">")[-MAX_SEQ_LEN:]
             tokens = tokenizer.text_to_indices(prompt)
             
+            recon = tokenizer.indices_to_text(tokens)
+            print(f"[{recon}]",end='')
+            
             while len(tokens) < MAX_SEQ_LEN:
                 tokens.insert(0, pad_idx)
                 #tokens.append(pad_idx)
             
-            recon = tokenizer.indices_to_text(tokens)
             x = torch.tensor(tokens).unsqueeze(0).to(device)
-            print(f"[{recon}]",end='')
             
-            for i in range(1):
-                
-                # outputs = model(x).argmax(dim=-1).squeeze()
-                # outputs_list = outputs.cpu().tolist()[-1:]
-                
-                max_new_tokens = 20
-                temperature = 0.01
-                top_k = 5
-                outputs = model.generate(
-                    x, 
-                    max_new_tokens, 
-                    temperature=temperature, 
-                    top_k=top_k,
-                    eos_token=end_seq_idx,
-                    pad_token=pad_idx,
-                )
-                
-                outputs_list = outputs[0].tolist()
-                
-                recon = tokenizer.indices_to_text(outputs_list[len(tokens):])
-                print(recon, end='')
-                
-                # Check for <EOS>
-                if end_seq_idx in outputs_list:
-                    break
-                # Cycle for next round
-                #print(tokens)
-                tokens = outputs_list
-                
-                while len(tokens) < MAX_SEQ_LEN:
-                    tokens.insert(0, pad_idx)
-                    #tokens.append(pad_idx)
-                x = torch.tensor(tokens).unsqueeze(0).to(device)
+            
+            max_new_tokens = 200
+            temperature = 1.0
+            top_k = 5
+            outputs = model.generate(
+                x, 
+                max_new_tokens, 
+                temperature=temperature, 
+                top_k=top_k,
+                eos_token=end_seq_idx,
+                pad_token=pad_idx,
+            )
+            
+            outputs_list = outputs[0].tolist()
+            
+            recon = tokenizer.indices_to_text(outputs_list[len(tokens):])
+            print(recon, end='')
+            

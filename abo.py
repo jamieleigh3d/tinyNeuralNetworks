@@ -56,7 +56,7 @@ def get_filepath_for_object(obj, image_list):
     return image_filepath
     
 
-def load_objects():
+def load_objects(num_objects = None):
     suffixes = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f']
     
     obj_data = []
@@ -69,6 +69,8 @@ def load_objects():
                 json_obj = json.loads(line)
                 if filter(json_obj):
                     obj_data.append(json_obj)
+                if num_objects is not None and len(obj_data) >= num_objects:
+                    return obj_data
     return obj_data
     
 def load_images():
