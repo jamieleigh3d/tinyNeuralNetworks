@@ -58,6 +58,7 @@ class TextTransformer(nn.Module):
             memory_mask = look_ahead_mask,
             tgt_key_padding_mask = padding_mask,
         )
+        
         # taking only the last token for prediction, [-1] preserving the dimensionality
         x = self.fc(x)
         return x
@@ -87,7 +88,8 @@ class TextTransformer(nn.Module):
             idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size:]
             
             if pad_token is not None:
-                padding_mask, _ = model.create_masks(idx_cond, pad_token)
+                # Temporarily disable padding_mask
+                #padding_mask, _ = model.create_masks(idx_cond, pad_token)
                 logits = self(idx_cond, None)
             else:
                 # forward the model to get the logits for the index in the sequence
@@ -115,8 +117,8 @@ class TextTransformer(nn.Module):
         """Create padding masks for the src sequence."""
         padding_mask = (x == pad_token).to(x.device)
         tgt_len = x.shape[1]
-        look_ahead_mask = nn.Transformer.generate_square_subsequent_mask(tgt_len, x.device)
-        #look_ahead_mask = torch.triu(torch.ones((tgt_len, tgt_len)), diagonal=1).bool().to(x.device)
+        #look_ahead_mask = nn.Transformer.generate_square_subsequent_mask(tgt_len, x.device)
+        look_ahead_mask = torch.triu(torch.ones((tgt_len, tgt_len)), diagonal=1).bool().to(x.device)
         #print(f"x.shape: {x.shape} pm: {padding_mask.shape} lam: {look_ahead_mask.shape}")
         #print(f"x: {x}\npm: {padding_mask}\nlam: {look_ahead_mask}")
         
@@ -137,7 +139,7 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
                 x,
                 padding_mask=None,
                 look_ahead_mask=look_ahead_mask)
-            
+                
             loss = F.cross_entropy(outputs.view(-1, NUM_TOKENS), y.view(-1))
             loss.backward()
             optimizer.step()
@@ -175,8 +177,8 @@ if __name__ == "__main__":
     #]
 
     #input_texts = [ "Got the milk?" ]
-    input_texts = [ "Got milk?" ]
-    #input_texts = [ "Go buy milk?" ]
+    #input_texts = [ "Got milk?" ]
+    input_texts = [ "Go buy milk?" ]
     #input_texts = [ "Dog" ]
     
     #obj_data = abo.load_objects()[:10]
@@ -202,9 +204,14 @@ if __name__ == "__main__":
     print(f"Num inputs: {len(input_sequences)}")
     #exit()
     
+    # Hyperparameters
     BATCH_SIZE = 128
     NUM_TOKENS = tokenizer.vocab_size()
-    
+    epochs = 50
+    embed_dim=16
+    num_heads=4
+    num_layers=4
+    dropout=0.0
     
     # Prepare data for DataLoader
     X = torch.tensor(input_sequences).to(device)
@@ -217,10 +224,10 @@ if __name__ == "__main__":
     model = TextTransformer(
         vocab_size=NUM_TOKENS, 
         block_size=MAX_SEQ_LEN,
-        embed_dim=16, 
-        num_heads=4, 
-        num_decoder_layers=4, 
-        dropout=0.0
+        embed_dim=embed_dim, 
+        num_heads=num_heads, 
+        num_decoder_layers=num_layers, 
+        dropout=dropout
     ).to(device)
     print(X.shape)
     print(Y.shape)
@@ -228,7 +235,7 @@ if __name__ == "__main__":
     end_seq_idx = tokenizer.special_token_to_index(tokenizer.eos_token)
     pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
     
-    train_text(model, dataloader, NUM_TOKENS, pad_idx, epochs=100)
+    train_text(model, dataloader, NUM_TOKENS, pad_idx, epochs=epochs)
     
     print("Training finished!")
     
