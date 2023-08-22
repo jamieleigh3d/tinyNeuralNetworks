@@ -185,26 +185,28 @@ if __name__ == "__main__":
     #input_texts = [ "Go buy milk?" ]
     #input_texts = [ "Dog" ]
     
-    obj_data = abo.load_objects(1000)
+    obj_data = abo.load_objects(10)
     input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
     [print(t) for t in input_texts]
     
     print(len(input_texts))
     
-    #tokenizer = T.UTF8Tokenizer()
-    tokenizer = T.WordTokenizer()
+    tokenizer = T.UTF8Tokenizer()
+    #tokenizer = T.WordTokenizer()
     dataset = TextDataset(tokenizer)
     
     MAX_SEQ_LEN = 32
     
     input_sequences, input_masks, target_sequences = dataset.load(input_texts, seq_len=MAX_SEQ_LEN)
     
-    for idx, (tokens, next_token) in enumerate(zip(input_sequences, target_sequences)):
-        str = tokenizer.indices_to_text(tokens)
-        target = tokenizer.indices_to_text(next_token)
-        
-        print(f"'{escape(str)}' => '{escape(target)}'")
+    show_inputs = False
+    if show_inputs:
+        for idx, (tokens, next_token) in enumerate(zip(input_sequences, target_sequences)):
+            str = tokenizer.indices_to_text(tokens)
+            target = tokenizer.indices_to_text(next_token)
+            
+            print(f"'{escape(str)}' => '{escape(target)}'")
     
     print(f"Num inputs: {len(input_sequences)}")
     #exit()
@@ -212,11 +214,12 @@ if __name__ == "__main__":
     # Hyperparameters
     BATCH_SIZE = 128
     NUM_TOKENS = tokenizer.vocab_size()
-    epochs = 25
+    epochs = 200
     embed_dim=64
     num_heads=8
     num_layers=8
     dropout=0.1
+    
     
     # Prepare data for DataLoader
     X = torch.tensor(input_sequences).to(device)
@@ -224,7 +227,6 @@ if __name__ == "__main__":
     tensor_dataset = TensorDataset(X, Y)
     dataloader = DataLoader(tensor_dataset, batch_size=BATCH_SIZE, shuffle=True)
     
-
     # Instantiate and train the model
     model = TextTransformer(
         vocab_size=NUM_TOKENS, 
