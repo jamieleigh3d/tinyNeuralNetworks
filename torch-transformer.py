@@ -7,7 +7,8 @@ import math
 
 import tokenization as T
 import lrschedulers
-from datasets import TextDataset, escape
+import dataset_utils
+from dataset_utils import escape
 import abo as abo
 
 class TextTransformer(nn.Module):
@@ -16,7 +17,7 @@ class TextTransformer(nn.Module):
         
         self.block_size = block_size
         self.embedding = nn.Embedding(vocab_size, embed_dim)
-        self.pos_embedding = nn.Embedding(block_size, embed_dim)
+        #self.pos_embedding = nn.Embedding(block_size, embed_dim)
         self.dropout = nn.Dropout(dropout)
         
         self.pos_enc = self.positional_encoding(block_size, embed_dim)
@@ -136,9 +137,10 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
     for epoch in range(epochs):
         epoch_loss = 0
         for batch_idx, (x, y) in enumerate(dataloader):
+            
             optimizer.zero_grad()
             padding_mask, look_ahead_mask = model.create_masks(x, pad_token)
-            
+                    
             outputs = model(
                 x,
                 padding_mask=None,
@@ -180,13 +182,13 @@ if __name__ == "__main__":
     #    "See spot run. Run spot run!"
     #]
 
-    #input_texts = [ "Got the milk?" ]
-    input_texts = [ "Got milk?" ]
+    input_texts = [ "Got the milk?" ]
+    #input_texts = [ "Got milk?" ]
     #input_texts = [ "Go buy milk?" ]
     #input_texts = [ "Dog" ]
     
-    obj_data = abo.load_objects(10)
-    input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
+    #obj_data = abo.load_objects(100)
+    #input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
     [print(t) for t in input_texts]
     
@@ -194,13 +196,16 @@ if __name__ == "__main__":
     
     tokenizer = T.UTF8Tokenizer()
     #tokenizer = T.WordTokenizer()
-    dataset = TextDataset(tokenizer)
+    sequencer = dataset_utils.TextDatasetSequencer(tokenizer)
     
-    MAX_SEQ_LEN = 32
+    MAX_SEQ_LEN = 16
     
-    input_sequences, input_masks, target_sequences = dataset.load(input_texts, seq_len=MAX_SEQ_LEN)
+    input_sequences, target_sequences = sequencer.load(
+        input_texts, 
+        seq_len=MAX_SEQ_LEN,
+    )
     
-    show_inputs = False
+    show_inputs = True
     if show_inputs:
         for idx, (tokens, next_token) in enumerate(zip(input_sequences, target_sequences)):
             str = tokenizer.indices_to_text(tokens)
@@ -212,12 +217,12 @@ if __name__ == "__main__":
     #exit()
     
     # Hyperparameters
-    BATCH_SIZE = 128
+    BATCH_SIZE = 256
     NUM_TOKENS = tokenizer.vocab_size()
-    epochs = 200
+    epochs = 100
     embed_dim=64
-    num_heads=8
-    num_layers=8
+    num_heads=4
+    num_layers=4
     dropout=0.1
     
     
@@ -225,7 +230,7 @@ if __name__ == "__main__":
     X = torch.tensor(input_sequences).to(device)
     Y = torch.tensor(target_sequences).to(device)
     tensor_dataset = TensorDataset(X, Y)
-    dataloader = DataLoader(tensor_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    dataloader = DataLoader(tensor_dataset, batch_size=BATCH_SIZE, shuffle=False)
     
     # Instantiate and train the model
     model = TextTransformer(
@@ -236,11 +241,12 @@ if __name__ == "__main__":
         num_decoder_layers=num_layers, 
         dropout=dropout
     ).to(device)
-    print(X.shape)
-    print(Y.shape)
+    
+    
 
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
+    sta_seq_idx = tokenizer.special_token_to_index(tokenizer.sta_token)
     end_seq_idx = tokenizer.special_token_to_index(tokenizer.eos_token)
     pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
     
@@ -253,21 +259,22 @@ if __name__ == "__main__":
         while True:
 
             print()
-            prompt = input(">")[-MAX_SEQ_LEN:]
+            prompt = input(">")[-MAX_SEQ_LEN-1:]
             tokens = tokenizer.text_to_indices(prompt)
             
-            recon = tokenizer.indices_to_text(tokens)
-            print(f"[{recon}]",end='')
-            
+            tokens.insert(0, sta_seq_idx)
             while len(tokens) < MAX_SEQ_LEN:
                 tokens.insert(0, pad_idx)
                 #tokens.append(pad_idx)
+            
+            recon = tokenizer.indices_to_text(tokens)
+            print(f"{recon}")
             
             x = torch.tensor(tokens).unsqueeze(0).to(device)
             
             
             max_new_tokens = 200
-            temperature = 1.0
+            temperature = 0.7
             top_k = 5
             outputs = model.generate(
                 x, 
@@ -280,6 +287,6 @@ if __name__ == "__main__":
             
             outputs_list = outputs[0].tolist()
             
-            recon = tokenizer.indices_to_text(outputs_list[len(tokens):])
+            recon = tokenizer.indices_to_text(outputs_list)
             print(recon, end='')
             

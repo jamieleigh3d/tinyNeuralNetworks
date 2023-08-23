@@ -4,11 +4,11 @@ class WordTokenizer:
     def __init__(self):
         self.vocab_idx = {}
         self.idx_vocab = {}
-        self.pad_token = "<PAD>"
-        self.sta_token = "<STA>"
-        self.eos_token = "<EOS>"
-        self.sep_token = "<SEP>"
-        self.unknown_token = "<UNK>"
+        self.pad_token = "<P>"
+        self.sta_token = "<S>"
+        self.eos_token = "<E>"
+        self.sep_token = "< >"
+        self.unknown_token = "<U>"
         self.special_tokens = [self.pad_token, self.unknown_token, self.eos_token, self.sta_token, self.sep_token]
         self.vocab_set = set(self.special_tokens)
         
@@ -86,9 +86,9 @@ class UTF8Tokenizer:
     def __init__(self):
         self.vocab_idx = {}
         self.idx_vocab = {}
-        self.pad_token = "<PAD>"
-        self.sta_token = "<STA>"
-        self.eos_token = "<EOS>"
+        self.pad_token = "<P>"
+        self.sta_token = "<S>"
+        self.eos_token = "<E>"
         self.unknown_token = "<UNK>"
         self.special_tokens = [self.pad_token, self.unknown_token, self.eos_token, self.sta_token]
         self.vocab_set = set(self.special_tokens)
