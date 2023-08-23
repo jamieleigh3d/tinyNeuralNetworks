@@ -2,7 +2,14 @@ import torch
 import numpy as np
 import random
 from PIL import Image as PILImage
+from pathlib import Path
 
+def create_directory(directory_path):
+    path = Path(directory_path)
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+    
 def seed_everywhere(seed):
 
     np.random.seed(seed)

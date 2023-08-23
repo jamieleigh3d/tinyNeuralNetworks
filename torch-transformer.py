@@ -165,6 +165,7 @@ class TextTransformer(nn.Module):
         
         return epoch
 
+    
 def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
     model.train()
     
@@ -194,12 +195,15 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
         print(f"Batch Loss: {avg_epoch_loss}")
         
         if save_enabled:
-            model.save(f"tinygpt_checkpoint.epoch{epoch}.pth", optimizer, epoch)
+            folder = "checkpoints"
+            path = torch_utils.create_directory(folder)
+
+            model.save(path / f"tinygpt_checkpoint.epoch{epoch}.pth", optimizer, epoch)
             if lowest_loss is None:
                 lowest_loss = avg_epoch_loss+1
             if avg_epoch_loss < lowest_loss:
                 lowest_loss = avg_epoch_loss
-                model.save(f"tinygpt_checkpoint.best.pth", optimizer, epoch)
+                model.save(path / f"tinygpt_checkpoint.best.pth", optimizer, epoch)
 
 if __name__ == "__main__":
     import sys
@@ -273,8 +277,8 @@ if __name__ == "__main__":
     num_layers = 8
     dropout = 0.1
     
-    do_training = False
-    load_checkpoint = True
+    do_training = True
+    load_checkpoint = False
     checkpoint_path = "tinygpt_checkpoint.epoch23.bpe.20k-titles.emb128.h8.l8.pth"
     #checkpoint_path = "tinygpt_checkpoint.char.500titles.e64.h8.l8.len64.pth"
     # BATCH_SIZE = 256
