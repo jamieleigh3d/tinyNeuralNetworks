@@ -130,8 +130,50 @@ class TextTransformer(nn.Module):
         
         return padding_mask, look_ahead_mask
 
+    
+    def save(self, filepath, optimizer, epoch):
+        """
+        Save the model's parameters and additional training-related information to a file.
+        
+        Args:
+            filepath (str): The path to the file where the model's parameters should be saved.
+            optimizer (torch.optim.Optimizer): The optimizer used for training.
+            epoch (int): The current epoch number.
+        """
+        checkpoint = {
+            'model_state_dict': self.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'epoch': epoch
+        }
+        torch.save(checkpoint, filepath)
+        #print(f'Checkpoint saved to {filepath}')
+
+    def load(self, filepath, optimizer=None):
+        """
+        Load the model's parameters and additional training-related information from a file.
+        
+        Args:
+            filepath (str): The path to the file from which the model's parameters should be loaded.
+            optimizer (torch.optim.Optimizer, optional): The optimizer used for training. If provided, its state will be updated.
+        
+        Returns:
+            int: The last saved epoch number.
+        """
+        checkpoint = torch.load(filepath, map_location='cpu')
+        self.load_state_dict(checkpoint['model_state_dict'])
+        
+        if optimizer:
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        epoch = checkpoint['epoch']
+        
+        return epoch
+
 def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
     model.train()
+    
+    lowest_loss = None
+    save_enabled = True
     
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
@@ -154,7 +196,13 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
         
         avg_epoch_loss = epoch_loss / len(dataloader)
         print(f"Batch Loss: {avg_epoch_loss}")
-
+        
+        if save_enabled:
+            if lowest_loss is None:
+                lowest_loss = avg_epoch_loss+1
+            if avg_epoch_loss < lowest_loss:
+                lowest_loss = avg_epoch_loss
+                model.save("tinygpt_checkpoint.pth", optimizer, epoch)
 
 if __name__ == "__main__":
     import sys
@@ -188,8 +236,8 @@ if __name__ == "__main__":
     #input_texts = [ "Go buy milk?" ]
     #input_texts = [ "Dog" ]
     
-    # obj_data = abo.load_objects(500)
-    # input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
+    obj_data = abo.load_objects(500)
+    input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
     [print(t) for t in input_texts]
     
@@ -206,7 +254,7 @@ if __name__ == "__main__":
         seq_len=MAX_SEQ_LEN,
     )
     
-    show_inputs = True
+    show_inputs = False
     if show_inputs:
         for idx, (tokens, next_token) in enumerate(zip(input_sequences, target_sequences)):
             str = tokenizer.indices_to_text(tokens,hide_pad=False)
@@ -221,10 +269,14 @@ if __name__ == "__main__":
     BATCH_SIZE = 256
     NUM_TOKENS = tokenizer.vocab_size()
     epochs = 100
-    embed_dim=64
-    num_heads=8
-    num_layers=8
-    dropout=0.1
+    embed_dim = 64
+    num_heads = 8
+    num_layers = 8
+    dropout = 0.1
+    
+    do_training = False
+    load_checkpoint = True
+    checkpoint_path = "tinygpt_checkpoint.char.500titles.e64.h8.l8.len64.pth"
     
     
     # Prepare data for DataLoader
@@ -243,7 +295,9 @@ if __name__ == "__main__":
         dropout=dropout
     ).to(device)
     
-    
+    if load_checkpoint:
+        epoch = model.load(checkpoint_path)
+        print(f"Loaded model {checkpoint_path} at epoch {epoch}")
 
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
@@ -251,7 +305,8 @@ if __name__ == "__main__":
     end_seq_idx = tokenizer.special_token_to_index(tokenizer.eos_token)
     pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
     
-    train_text(model, dataloader, NUM_TOKENS, pad_idx, epochs=epochs)
+    if do_training:
+        train_text(model, dataloader, NUM_TOKENS, pad_idx, epochs=epochs)
     
     print("Training finished!")
     
