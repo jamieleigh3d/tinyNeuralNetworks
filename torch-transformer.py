@@ -23,13 +23,6 @@ class TextTransformer(nn.Module):
         
         self.pos_enc = self.positional_encoding(block_size, embed_dim)
         
-        # self.transformer = nn.Transformer(
-            # d_model=embed_dim, 
-            # nhead=num_heads, 
-            # num_encoder_layers=0,
-            # num_decoder_layers=num_decoder_layers,
-        # )
-        
         decoder_layer = nn.TransformerDecoderLayer(
             d_model=embed_dim, 
             nhead=num_heads,
@@ -52,16 +45,19 @@ class TextTransformer(nn.Module):
         
         emb = self.dropout(emb + pos_emb)
         
-        x = self.transformer_decoder(
+        z = self.transformer_decoder(
             tgt = emb, 
             memory = emb, 
             tgt_mask = look_ahead_mask,
             memory_mask = look_ahead_mask,
             tgt_key_padding_mask = padding_mask,
         )
+        
+        z_mean = torch.mean(z, dim=1)
+        
         # taking only the last token for prediction, [-1] preserving the dimensionality
-        x = self.fc(x)
-        return x
+        x = self.fc(z)
+        return x, z_mean
         
     def positional_encoding(self, seq_len, d_model):
         position = torch.arange(seq_len).unsqueeze(1).float()
@@ -95,7 +91,7 @@ class TextTransformer(nn.Module):
             
             if pad_token is not None:
                 padding_mask, _ = model.create_masks(idx_cond, pad_token)
-                logits = self(idx_cond, padding_mask=None)
+                logits, z = self(idx_cond, padding_mask=None)
             else:
                 # forward the model to get the logits for the index in the sequence
                 logits = self(idx_cond)
@@ -183,8 +179,8 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
             
             optimizer.zero_grad()
             padding_mask, look_ahead_mask = model.create_masks(x, pad_token)
-                    
-            outputs = model(
+            
+            outputs,z = model(
                 x,
                 padding_mask=None,
                 look_ahead_mask=look_ahead_mask)
@@ -198,11 +194,12 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
         print(f"Batch Loss: {avg_epoch_loss}")
         
         if save_enabled:
+            model.save(f"tinygpt_checkpoint.epoch{epoch}.pth", optimizer, epoch)
             if lowest_loss is None:
                 lowest_loss = avg_epoch_loss+1
             if avg_epoch_loss < lowest_loss:
                 lowest_loss = avg_epoch_loss
-                model.save("tinygpt_checkpoint.pth", optimizer, epoch)
+                model.save(f"tinygpt_checkpoint.best.pth", optimizer, epoch)
 
 if __name__ == "__main__":
     import sys
@@ -237,10 +234,10 @@ if __name__ == "__main__":
     #input_texts = [ "Go buy milk?" ]
     #input_texts = [ "Dog" ]
     
-    obj_data = abo.load_objects(50)
+    obj_data = abo.load_objects(10)
     input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
-    [print(t) for t in input_texts]
+    #[print(t) for t in input_texts]
     
     print(len(input_texts))
     
@@ -249,7 +246,7 @@ if __name__ == "__main__":
     tokenizer = T.BPETokenizer()
     sequencer = dataset_utils.TextDatasetSequencer(tokenizer)
     
-    MAX_SEQ_LEN = 32
+    MAX_SEQ_LEN = 128
     
     input_sequences, target_sequences = sequencer.load(
         input_texts, 
@@ -268,16 +265,17 @@ if __name__ == "__main__":
     #exit()
     
     # Hyperparameters
-    BATCH_SIZE = 128
+    BATCH_SIZE = 32
     NUM_TOKENS = tokenizer.vocab_size()
-    epochs = 50
-    embed_dim = 64
+    epochs = 100
+    embed_dim = 128
     num_heads = 8
     num_layers = 8
     dropout = 0.1
     
-    do_training = True
-    load_checkpoint = False
+    do_training = False
+    load_checkpoint = True
+    checkpoint_path = "tinygpt_checkpoint.epoch23.bpe.20k-titles.emb128.h8.l8.pth"
     #checkpoint_path = "tinygpt_checkpoint.char.500titles.e64.h8.l8.len64.pth"
     # BATCH_SIZE = 256
     # NUM_TOKENS = tokenizer.vocab_size()
