@@ -208,6 +208,7 @@ if __name__ == "__main__":
     import sys
     import torch_utils
     
+    
     sys.stdout.reconfigure(encoding='utf-8')
 
     device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -231,23 +232,24 @@ if __name__ == "__main__":
     #    "See spot run. Run spot run!"
     #]
 
-    input_texts = [ "Got the milk?" ]
-    #input_texts = [ "Got milk?" ]
+    #input_texts = [ "Got the milk?" ]
+    input_texts = [ "Got milk?" ]
     #input_texts = [ "Go buy milk?" ]
     #input_texts = [ "Dog" ]
     
-    obj_data = abo.load_objects(500)
+    obj_data = abo.load_objects(50)
     input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
     [print(t) for t in input_texts]
     
     print(len(input_texts))
     
-    tokenizer = T.UTF8Tokenizer()
+    #tokenizer = T.UTF8Tokenizer()
     #tokenizer = T.WordTokenizer()
+    tokenizer = T.BPETokenizer()
     sequencer = dataset_utils.TextDatasetSequencer(tokenizer)
     
-    MAX_SEQ_LEN = 64
+    MAX_SEQ_LEN = 32
     
     input_sequences, target_sequences = sequencer.load(
         input_texts, 
@@ -266,19 +268,27 @@ if __name__ == "__main__":
     #exit()
     
     # Hyperparameters
-    BATCH_SIZE = 256
+    BATCH_SIZE = 128
     NUM_TOKENS = tokenizer.vocab_size()
-    epochs = 100
+    epochs = 50
     embed_dim = 64
     num_heads = 8
     num_layers = 8
     dropout = 0.1
     
-    do_training = False
-    load_checkpoint = True
-    checkpoint_path = "tinygpt_checkpoint.char.500titles.e64.h8.l8.len64.pth"
+    do_training = True
+    load_checkpoint = False
+    #checkpoint_path = "tinygpt_checkpoint.char.500titles.e64.h8.l8.len64.pth"
+    # BATCH_SIZE = 256
+    # NUM_TOKENS = tokenizer.vocab_size()
+    # epochs = 100
+    # embed_dim = 64
+    # num_heads = 8
+    # num_layers = 8
+    # dropout = 0.1
     
-    
+    print(f"NUM_TOKENS: {NUM_TOKENS}")
+
     # Prepare data for DataLoader
     X = torch.tensor(input_sequences).to(device)
     Y = torch.tensor(target_sequences).to(device)
@@ -329,7 +339,7 @@ if __name__ == "__main__":
             x = torch.tensor(tokens).unsqueeze(0).to(device)
             
             max_new_tokens = 200
-            temperature = 0.7
+            temperature = 0.007
             top_k = 5
             outputs = model.generate(
                 x, 

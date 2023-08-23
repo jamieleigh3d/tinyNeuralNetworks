@@ -1,6 +1,8 @@
 import re
 from abc import ABC, abstractmethod
 
+import bpe
+
 class Tokenizer(ABC):
     def __init__(self):
         self.vocab_idx = {}
@@ -31,7 +33,7 @@ class Tokenizer(ABC):
         return len(self.vocab_idx)
 
     def text_to_indices(self, text):
-        """Converts a list of strings into a list of lists of indices."""
+        """Converts a list of strings into a list of indices."""
         tokens = self._tokenize([text])[0]
         return [self.vocab_idx.get(t, self.vocab_idx[self.unknown_token]) for t in tokens]
 
@@ -130,7 +132,7 @@ class UTF8Tokenizer(Tokenizer):
         token_idx = self.special_token_to_index(self.pad_token)
         self.idx_vocab_no_pad[token_idx] = ''
     
-class BPETokenizer(Tokenizer):
+class MyBPETokenizer(Tokenizer):
     def __init__(self, max_vocab_size=32000):
         super().__init__()
         self.max_vocab_size = max_vocab_size
@@ -156,7 +158,8 @@ class BPETokenizer(Tokenizer):
     def build_vocab(self, texts):
         vocab = {}
         for word in texts:
-            word = ' '.join(list(word)) + ' </w>'  # Convert word to characters and add end of word symbol
+            # Convert word to characters, but preserve spaces, \n and \t
+            word = ' '.join(re.findall(r'\S+|\s', word))
             vocab[word] = vocab.get(word, 0) + 1
 
         vocab_size = sum(len(word.split()) for word in vocab)
@@ -182,16 +185,98 @@ class BPETokenizer(Tokenizer):
         assert token_idx is not None, "Internal error handling special tokens"
         self.idx_vocab_no_pad[token_idx] = ''
         
-
-    def _tokenize(self, text):
+    def _tokenize(self, texts):
         """Tokenize the input text using BPE."""
-        print("1",text)
-        text = ' '.join(list(text)) + ' </w>'
-        print("2",text)
-        for token in self.vocab_idx:
-            text = text.replace(' '.join(list(token)), token)
-        print("3",text.split())
-        return text.split()
+        tokenized_texts = []
+
+        # Sort tokens by length to ensure we're replacing the longest matches first
+        sorted_tokens = sorted(self.vocab_idx.keys(), key=len, reverse=True)
+
+        for text in texts:
+            # Preserve spaces, \n and \t and add the <\w> marker at the end of each word
+            text = ' '.join(re.findall(r'\S+|\s', text))
+
+            # Replace with tokens
+            for token in sorted_tokens:
+                text = text.replace(' '.join(list(token)) + ' ', token + ' ')
+
+            tokenized_texts.append(text.split())
+            
+        return tokenized_texts
+        
+    def indices_to_texts(self, indices, masks=None, hide_pad=True):
+        """Converts a list of lists of indices back to their original strings."""
+        
+        # Calling the superclass method
+        tokenized_texts = super().indices_to_texts(indices, masks=masks, hide_pad=hide_pad)
+        
+        # Convert tokenized text to original text
+        #reconstructed_texts = [txt.replace("</w>", " ").strip() for txt in tokenized_texts]
+        
+        return tokenized_texts
+
+    def indices_to_text(self, indices, mask=None, hide_pad=True):
+        """Converts a list of indices back to their original strings."""
+        
+        # Calling the superclass method
+        tokenized_text = super().indices_to_text(indices, mask=mask, hide_pad=hide_pad)
+        
+        # Convert tokenized text to original text
+        #reconstructed_text = tokenized_text.replace("</w>", " ").strip()
+        
+        return tokenized_texts
+
+class BPETokenizer(Tokenizer):
+    def __init__(self):
+        self.encoder = bpe.get_encoder()
+        self.pad_token = "<|p|>"
+        self.sta_token = "<|s|>"
+        self.eos_token = "<|endoftext|>"
+        self.eos_idx = 50256
+        self.special_tokens = [self.pad_token, self.eos_token]
+        self.pad_idx = self.encoder.add_special(self.pad_token)
+        self.sta_idx = self.encoder.add_special(self.sta_token)
+        
+    def vocab_size(self):
+        #50258 # 256 individual byte tokens, 50,000 merged tokens, and 1 special <|endoftext|> token and 1 special <|pad|> token
+        return len(self.encoder.encoder)
+        
+    def special_token_to_index(self, token):
+        if token == self.pad_token:
+            return self.pad_idx
+        if token == self.sta_token:
+            return self.sta_idx
+        #<|endoftext|>
+        return self.eos_idx 
+    
+    def build_vocab(self, texts):
+        pass
+    
+    def _tokenize(self, texts):
+        pass
+        
+    def text_to_indices(self, text):
+        """Converts a list of strings into a list of indices."""
+        return self.encoder.encode(text)
+
+    def texts_to_indices(self, texts):
+        """Converts a list of strings into a list of lists of indices."""
+        return [self.text_to_indices(text) for text in texts]
+
+    def indices_to_texts(self, indices, mask=None, hide_pad=True):
+        return [self.indices_to_text(idxs) for idxs in indices]
+        
+    def indices_to_text(self, indices, mask=None, hide_pad=True):
+        return self.encoder.decode(indices)
+
+    def wrap(self, token_list):
+        start_token = self.special_token_to_index(self.sta_token)
+        end_token = self.special_token_to_index(self.eos_token)
+        for t in token_list:
+            t.insert(0, start_token)
+            t.append(end_token)
+
+
 
 
 if __name__ == "__main__":
@@ -201,7 +286,7 @@ if __name__ == "__main__":
         "See spot run. Run spot run!",
         "My # is 123-456-7890. Got that?",
         "Hello!!!? Are you there??",
-        "this is a test\nwith a newline\tand a tab"
+        "this is   a test\nwith a newline\tand a tab "
     ]
     
     print(input_texts)
@@ -232,18 +317,31 @@ if __name__ == "__main__":
     reconstructed_texts = tokenizer.indices_to_texts(text_indices)
     print("Reconstructed:", reconstructed_texts)
     
-    print('\n--- BPETokenizer ---\n')
+    print('\n--- MyBPETokenizer ---\n')
     
     # Word Tokenizer usage:
-    tokenizer = BPETokenizer()
+    tokenizer = MyBPETokenizer()
 
     tokenizer.build_vocab(input_texts)
 
     text_indices = tokenizer.texts_to_indices(input_texts)
     print("Indices:", text_indices)
     
-    print(tokenizer.idx_vocab)
+    print(f"tokenizer.idx_vocab: {tokenizer.idx_vocab}")
     
     reconstructed_texts = tokenizer.indices_to_texts(text_indices)
     print("Reconstructed:", reconstructed_texts)
+    
+    print('\n--- BPETokenizer ---\n')
+    
+    # Word Tokenizer usage:
+    tokenizer = BPETokenizer()
 
+    #tokenizer.build_vocab(input_texts)
+
+    text_indices = tokenizer.texts_to_indices(input_texts)
+    print("Indices:", text_indices)
+    
+    reconstructed_texts = tokenizer.indices_to_texts(text_indices)
+    print("Reconstructed:", reconstructed_texts)
+    
