@@ -21,12 +21,6 @@ class Tokenizer(ABC):
     def _tokenize(self, texts):
         pass
     
-    def add_special_token(self, token):
-        """Add a new special token to the tokenizer."""
-        if token not in self.special_tokens:
-            self.special_tokens.append(token)
-            self.build_vocab(self.special_tokens)  # Rebuild vocab to include new special token
-    
     def special_token_to_index(self, token):
         """Get the index of a special token."""
         idx = self.vocab_idx.get(token, None)
@@ -136,6 +130,69 @@ class UTF8Tokenizer(Tokenizer):
         token_idx = self.special_token_to_index(self.pad_token)
         self.idx_vocab_no_pad[token_idx] = ''
     
+class BPETokenizer(Tokenizer):
+    def __init__(self, max_vocab_size=32000):
+        super().__init__()
+        self.max_vocab_size = max_vocab_size
+
+    def _get_stats(self, vocab):
+        pairs = {}
+        for word, freq in vocab.items():
+            symbols = word.split()
+            for i in range(len(symbols) - 1):
+                pair = (symbols[i], symbols[i + 1])
+                pairs[pair] = pairs.get(pair, 0) + freq
+        return pairs
+
+    def _merge_vocab(self, pair, vocab):
+        new_vocab = {}
+        bigram = ' '.join(pair)
+        replacement = ''.join(pair)
+        for word in vocab:
+            w_out = word.replace(bigram, replacement)
+            new_vocab[w_out] = vocab[word]
+        return new_vocab
+
+    def build_vocab(self, texts):
+        vocab = {}
+        for word in texts:
+            word = ' '.join(list(word)) + ' </w>'  # Convert word to characters and add end of word symbol
+            vocab[word] = vocab.get(word, 0) + 1
+
+        vocab_size = sum(len(word.split()) for word in vocab)
+        while vocab_size < self.max_vocab_size:
+            pairs = self._get_stats(vocab)
+            if not pairs:
+                break
+            best = max(pairs, key=pairs.get)
+            vocab = self._merge_vocab(best, vocab)
+            vocab_size += 1
+
+        # Build vocab_idx and idx_vocab
+        tokens = list(set(' '.join(list(vocab.keys())).split()))
+        self.vocab_idx = {token: i for i, token in enumerate(self.special_tokens + tokens)}
+        self.idx_vocab = {i: token for token, i in self.vocab_idx.items()}
+        self.idx_vocab_no_pad = {idx: char for char, idx in self.vocab_idx.items()}
+
+        self.vocab_set = set(tokens)
+        self.vocab_set.update(self.special_tokens)
+        
+        # Set pad tokens to nothing
+        token_idx = self.vocab_idx.get(self.pad_token,None)
+        assert token_idx is not None, "Internal error handling special tokens"
+        self.idx_vocab_no_pad[token_idx] = ''
+        
+
+    def _tokenize(self, text):
+        """Tokenize the input text using BPE."""
+        print("1",text)
+        text = ' '.join(list(text)) + ' </w>'
+        print("2",text)
+        for token in self.vocab_idx:
+            text = text.replace(' '.join(list(token)), token)
+        print("3",text.split())
+        return text.split()
+
 
 if __name__ == "__main__":
     input_texts = [
@@ -150,11 +207,9 @@ if __name__ == "__main__":
     print(input_texts)
     
     print('\n--- UTF8Tokenizer ---\n')
+    
     # Character tokenizer usage:
     tokenizer = UTF8Tokenizer()
-
-    tokenizer.add_special_token("<CUSTOM>")
-    print("Index of custom token:", tokenizer.special_token_to_index("<CUSTOM>"))
 
     tokenizer.build_vocab(input_texts)
     
@@ -169,14 +224,25 @@ if __name__ == "__main__":
     # Word Tokenizer usage:
     tokenizer = WordTokenizer()
 
-    # Example usage of the added functions:
-    tokenizer.add_special_token("<CUSTOM>")
-    print("Index of custom token:", tokenizer.special_token_to_index("<CUSTOM>"))
-    
     tokenizer.build_vocab(input_texts)
 
     text_indices = tokenizer.texts_to_indices(input_texts)
     print("Indices:", text_indices)
+    
+    reconstructed_texts = tokenizer.indices_to_texts(text_indices)
+    print("Reconstructed:", reconstructed_texts)
+    
+    print('\n--- BPETokenizer ---\n')
+    
+    # Word Tokenizer usage:
+    tokenizer = BPETokenizer()
+
+    tokenizer.build_vocab(input_texts)
+
+    text_indices = tokenizer.texts_to_indices(input_texts)
+    print("Indices:", text_indices)
+    
+    print(tokenizer.idx_vocab)
     
     reconstructed_texts = tokenizer.indices_to_texts(text_indices)
     print("Reconstructed:", reconstructed_texts)
