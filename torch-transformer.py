@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import math
+from tqdm import tqdm, trange
 
 import tokenization as T
 import lrschedulers
@@ -134,9 +135,9 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
     
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
-    for epoch in range(epochs):
+    for epoch in trange(epochs, desc="Training"):
         epoch_loss = 0
-        for batch_idx, (x, y) in enumerate(dataloader):
+        for batch_idx, (x, y) in enumerate(tqdm(dataloader, leave=False, desc="Batch")):
             
             optimizer.zero_grad()
             padding_mask, look_ahead_mask = model.create_masks(x, pad_token)
@@ -152,7 +153,7 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
             epoch_loss += loss.item()
         
         avg_epoch_loss = epoch_loss / len(dataloader)
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_epoch_loss}")
+        print(f"Batch Loss: {avg_epoch_loss}")
 
 
 if __name__ == "__main__":
@@ -187,8 +188,8 @@ if __name__ == "__main__":
     #input_texts = [ "Go buy milk?" ]
     #input_texts = [ "Dog" ]
     
-    #obj_data = abo.load_objects(100)
-    #input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
+    # obj_data = abo.load_objects(500)
+    # input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
     [print(t) for t in input_texts]
     
@@ -198,7 +199,7 @@ if __name__ == "__main__":
     #tokenizer = T.WordTokenizer()
     sequencer = dataset_utils.TextDatasetSequencer(tokenizer)
     
-    MAX_SEQ_LEN = 16
+    MAX_SEQ_LEN = 64
     
     input_sequences, target_sequences = sequencer.load(
         input_texts, 
@@ -208,8 +209,8 @@ if __name__ == "__main__":
     show_inputs = True
     if show_inputs:
         for idx, (tokens, next_token) in enumerate(zip(input_sequences, target_sequences)):
-            str = tokenizer.indices_to_text(tokens)
-            target = tokenizer.indices_to_text(next_token)
+            str = tokenizer.indices_to_text(tokens,hide_pad=False)
+            target = tokenizer.indices_to_text(next_token,hide_pad=False)
             
             print(f"'{escape(str)}' => '{escape(target)}'")
     
@@ -221,8 +222,8 @@ if __name__ == "__main__":
     NUM_TOKENS = tokenizer.vocab_size()
     epochs = 100
     embed_dim=64
-    num_heads=4
-    num_layers=4
+    num_heads=8
+    num_layers=8
     dropout=0.1
     
     
@@ -267,11 +268,10 @@ if __name__ == "__main__":
                 tokens.insert(0, pad_idx)
                 #tokens.append(pad_idx)
             
-            recon = tokenizer.indices_to_text(tokens)
-            print(f"{recon}")
+            # recon = tokenizer.indices_to_text(tokens,hide_pad=True)
+            # print(f"{recon}")
             
             x = torch.tensor(tokens).unsqueeze(0).to(device)
-            
             
             max_new_tokens = 200
             temperature = 0.7
@@ -287,6 +287,6 @@ if __name__ == "__main__":
             
             outputs_list = outputs[0].tolist()
             
-            recon = tokenizer.indices_to_text(outputs_list)
-            print(recon, end='')
+            recon = tokenizer.indices_to_text(outputs_list,hide_pad=True)
+            print(f"]{recon}")
             

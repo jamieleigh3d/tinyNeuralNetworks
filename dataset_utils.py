@@ -17,22 +17,15 @@ class TextDatasetSequencer():
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
     
-    def append_eos(self, token_list, start_token, end_token):
-        for t in token_list:
-            t.insert(0, start_token)
-            t.append(end_token)
-    
     def load(self, input_texts, seq_len=8, use_padding=True):
         tokenizer = self.tokenizer
         
         tokenizer.build_vocab(input_texts)
         training_tokens = tokenizer.texts_to_indices(input_texts)
         
-        start_seq_idx = tokenizer.special_token_to_index(tokenizer.sta_token)
-        end_seq_idx = tokenizer.special_token_to_index(tokenizer.eos_token)
         pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
     
-        self.append_eos(training_tokens, start_seq_idx, end_seq_idx)
+        tokenizer.wrap(training_tokens)
         
         input_sequences = []
         target_sequences = []

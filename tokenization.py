@@ -46,6 +46,13 @@ class WordTokenizer:
 
         self.vocab_idx = {word: idx for idx, word in enumerate(sorted_tokens + self.special_tokens)}
         self.idx_vocab = {idx: word for word, idx in self.vocab_idx.items()}
+        
+        self.idx_vocab_no_pad = {idx: word for word, idx in self.vocab_idx.items()}
+        
+        # Set pad tokens to nothing
+        token_idx = self.special_token_to_index(self.pad_token)
+        self.idx_vocab_no_pad[token_idx] = ''
+        
         return self.vocab_idx
         
     def vocab_size(self):
@@ -66,22 +73,33 @@ class WordTokenizer:
         else:
             return f"[{word}]"
 
-    def indices_to_texts(self, indices, masks=None):
+    def indices_to_texts(self, indices, masks=None, hide_pad=True):
         """Converts a list of lists of indices back to their original strings."""
+        idx_v = self.idx_vocab_no_pad if hide_pad else self.idx_vocab
+        
         if masks:
             assert len(indices) == len(masks), f"Mask should be same length as indices. Expected {len(indices)} found {len(masks)}"
-            return [''.join([self.mask_filter(self.idx_vocab[idx], mask) for idx, mask in zip(seq, mask)]) for seq, mask in zip(indices, masks)]
+            return [''.join([self.mask_filter(idx_v[idx], mask) for idx, mask in zip(seq, mask)]) for seq, mask in zip(indices, masks)]
         else:
-            return [''.join([self.idx_vocab[idx] for idx in text_indices]) for text_indices in indices]
+            return [''.join([idx_v[idx] for idx in text_indices]) for text_indices in indices]
 
-    def indices_to_text(self, indices, mask=None):
+    def indices_to_text(self, indices, mask=None, hide_pad=True):
         """Converts a list of indices back to their original string."""
+        idx_v = self.idx_vocab_no_pad if hide_pad else self.idx_vocab
+        
         if mask:
             assert len(indices) == len(mask), f"Mask should be same length as indices. Expected {len(indices)} found {len(masks)}"
-            return ''.join([self.mask_filter(self.idx_vocab[idx], m) for idx, m in zip(indices, mask)])
+            return ''.join([self.mask_filter(idx_v[idx], m) for idx, m in zip(indices, mask)])
         else:
-            return ''.join([self.idx_vocab.get(idx, self.unknown_token) for idx in indices])
-
+            return ''.join([idx_v.get(idx, self.unknown_token) for idx in indices])
+    
+    def wrap(self, token_list):
+        start_token = self.special_token_to_index(self.sta_token)
+        end_token = self.special_token_to_index(self.eos_token)
+        for t in token_list:
+            t.insert(0, start_token)
+            t.append(end_token)
+            
 class UTF8Tokenizer:
     def __init__(self):
         self.vocab_idx = {}
@@ -119,6 +137,12 @@ class UTF8Tokenizer:
 
         self.vocab_idx = {char: idx for idx, char in enumerate(sorted(self.vocab_set))}
         self.idx_vocab = {idx: char for char, idx in self.vocab_idx.items()}
+        self.idx_vocab_no_pad = {idx: char for char, idx in self.vocab_idx.items()}
+        
+        # Set pad tokens to nothing
+        token_idx = self.special_token_to_index(self.pad_token)
+        self.idx_vocab_no_pad[token_idx] = ''
+        
         return self.vocab_idx
         
     def vocab_size(self):
@@ -138,21 +162,33 @@ class UTF8Tokenizer:
         else:
             return f"[{str}]"
 
-    def indices_to_texts(self, indices, masks=None):
+    def indices_to_texts(self, indices, masks=None, hide_pad=True):
         """Converts a list of lists of indices back to their original strings."""
+        idx_v = self.idx_vocab_no_pad if hide_pad else self.idx_vocab
+        
         if masks:
             assert len(indices)==len(masks), f"Mask should be same length as indices. Expected {len(indices)} found {len(masks)}"
-            return [''.join([self.mask_filter(self.idx_vocab[idx], mask) for idx, mask in zip(seq,mask)]) for seq,mask in zip(indices, masks)]
+            return [''.join([self.mask_filter(idx_v[idx], mask) for idx, mask in zip(seq,mask)]) for seq,mask in zip(indices, masks)]
         else:
-            return [''.join([self.idx_vocab[idx] for idx in text_indices]) for text_indices in indices]
+            return [''.join([idx_v[idx] for idx in text_indices]) for text_indices in indices]
 
-    def indices_to_text(self, indices, mask=None):
+    def indices_to_text(self, indices, mask=None, hide_pad=True):
         """Converts a list of lists of indices back to their original strings."""
+        idx_v = self.idx_vocab_no_pad if hide_pad else self.idx_vocab
+        
         if mask:
             assert len(indices)==len(mask), f"Mask should be same length as indices. Expected {len(indices)} found {len(masks)}"
-            return ''.join([self.mask_filter(self.idx_vocab[idx], m) for idx, m in zip(indices,mask)])
+            return ''.join([self.mask_filter(idx_v[idx], m) for idx, m in zip(indices,mask)])
         else:
-            return ''.join([self.idx_vocab.get(idx,self.unknown_token) for idx in indices])
+            return ''.join([idx_v.get(idx,self.unknown_token) for idx in indices])
+
+    def wrap(self, token_list):
+        start_token = self.special_token_to_index(self.sta_token)
+        end_token = self.special_token_to_index(self.eos_token)
+        for t in token_list:
+            t.insert(0, start_token)
+            t.append(end_token)
+    
 
 if __name__ == "__main__":
     input_texts = [
