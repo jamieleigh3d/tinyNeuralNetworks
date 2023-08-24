@@ -238,7 +238,7 @@ class BPETokenizer(Tokenizer):
         self.sta_idx = self.encoder.add_special(self.sta_token)
         
     def vocab_size(self):
-        #50258 # 256 individual byte tokens, 50,000 merged tokens, and 1 special <|endoftext|> token and 1 special <|pad|> token
+        #50259 # 256 individual byte tokens, 50,000 merged tokens, and 3 special tokens: <|endoftext|> <|s|> <|p|> 
         return len(self.encoder.encoder)
         
     def special_token_to_index(self, token):
@@ -264,10 +264,14 @@ class BPETokenizer(Tokenizer):
         return [self.text_to_indices(text) for text in texts]
 
     def indices_to_texts(self, indices, mask=None, hide_pad=True):
-        return [self.indices_to_text(idxs) for idxs in indices]
+        return [self.indices_to_text(idxs, hide_pad) for idxs in indices]
         
     def indices_to_text(self, indices, mask=None, hide_pad=True):
-        return self.encoder.decode(indices)
+        text = self.encoder.decode(indices)
+
+        if hide_pad:
+            text = text.replace(self.pad_token, '')
+        return text
 
     def wrap(self, token_list):
         start_token = self.special_token_to_index(self.sta_token)
