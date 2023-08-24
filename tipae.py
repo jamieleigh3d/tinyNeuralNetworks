@@ -380,34 +380,38 @@ def generate_display_images(frame, model, real_images, outputs, tokenizer):
             pil_image = torch_utils.tensor_to_image(out.detach().cpu())
             show_image_list.append((idx+frame.cols,pil_image))
         
-        for idx in range(frame.cols):
-            _,z1 = model.img_encode(real_images[idx].unsqueeze(0))
-            token_logits_out = model.text_decode(z1)
+        # for idx in range(frame.cols):
+            # _,z1 = model.img_encode(real_images[idx].unsqueeze(0))
+            # token_logits_out = model.text_decode(z1)
+            # tokens_recon = model.to_tokens(token_logits_out)
+            # recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
+            
+            # _,z2 = model.text_encode(tokens_recon)
+            # img_out = model.img_decode(z2)
+            
+            # pil_image = torch_utils.tensor_to_image(img_out[0].detach().cpu())
+            # show_image_list.append((idx+2*frame.cols,pil_image))
+            
+            # print(f"{idx} ======> {recon_out}")
+        
+        _,z1 = model.img_encode(real_images[0].unsqueeze(0))
+        _,z2 = model.img_encode(real_images[4].unsqueeze(0))
+        
+        num_lerps = frame.cols
+        for i in range(num_lerps):
+            alpha = i / (num_lerps-1)
+            
+            latent_lerp = torch_utils.slerp(z1, z2, alpha)
+            
+            out = model.img_decode(latent_lerp)[0]
+            
+            token_logits_out = model.text_decode(latent_lerp)
             tokens_recon = model.to_tokens(token_logits_out)
             recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
             
-            _,z2 = model.text_encode(tokens_recon)
-            img_out = model.img_decode(z2)
-            
-            pil_image = torch_utils.tensor_to_image(img_out[0].detach().cpu())
-            show_image_list.append((idx+2*frame.cols,pil_image))
-            
-            print(f"{idx} ======> {recon_out}")
-    
-        # z2 = model.img_encode(real_images[4].unsqueeze(0))
-        
-        # num_lerps = frame.cols
-        # for i in range(num_lerps):
-            # alpha = i / num_lerps
-            
-            # latent_lerp = torch_utils.slerp(z1, z2, alpha)
-            
-            # out = model.img_decode(latent_lerp)[0]
-            
-            # #out = latent_vectors[i].view(-1,img_size,img_size).clone().detach()
-            # #out = out.expand(3, -1, -1)
-            # pil_image = torch_utils.tensor_to_image(out.detach().cpu())
-            # show_image_list.append((i+frame.cols*2,pil_image))
+            print(f"{alpha:.2f} => '{recon_out}'")
+            pil_image = torch_utils.tensor_to_image(out.detach().cpu())
+            show_image_list.append((i+frame.cols*2,pil_image))
     
     return show_image_list
 
@@ -416,13 +420,20 @@ def train(frame, device):
     BATCH_SIZE = 64
     save_enabled = True
     show_pca = True
-    num_objects = 1024
+    num_objects = 12
+    
+    do_training = True
+    load_checkpoint = False
+    checkpoint_filepath = "checkpoints/saved/tipae_checkpoint.best.multimodal.pth"
     
     img_width = 128
     img_height = img_width
     block_size = 256
     
-    tokenizer = tokenization.UTF8Tokenizer()
+    # TODO: Move tokenizer into model
+    # TODO: Save/load tokenizer vocab with model
+    # TODO: Load returns a tokenizer
+    tokenizer = tokenization.BPETokenizer()
     
     dataloader = prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height, block_size, device)
     
@@ -432,42 +443,48 @@ def train(frame, device):
     num_epochs = 1000000
     logging_interval = 50
     NUM_TOKENS = tokenizer.vocab_size()
-
-    cfg = TIPAEConfig(
-        img_width = img_width,
-        img_height = img_height,
-        channels = 3,
-        emb_size = 256,
-        num_layers = 4,
-        num_heads = 4,
-        patch_count = 8,
-        mlp_dim = 256*4,
-        dim_head = 64,
-        
-        text_emb_size = 64,
-        vocab_size = NUM_TOKENS,
-        block_size = block_size,
-        dropout = 0.3,
-        
-        image_latent_size = 256,
-        text_latent_size = 256
-    )
     
-    model = TIPAE(cfg).to(device)
+    if load_checkpoint:
+        model, optimizer = TIPAE.from_checkpoint(checkpoint_filepath, torch.optim.Adam, {'lr': learning_rate})
+        model = model.to(device)
+        cfg = model.cfg
+        print(f"Loaded checkpoint from {checkpoint_filepath} at epoch {model.epoch}")
+    else:
+        cfg = TIPAEConfig(
+            img_width = img_width,
+            img_height = img_height,
+            channels = 3,
+            emb_size = 256,
+            num_layers = 4,
+            num_heads = 4,
+            patch_count = 8,
+            mlp_dim = 256*4,
+            dim_head = 64,
+            
+            text_emb_size = 64,
+            vocab_size = NUM_TOKENS,
+            block_size = block_size,
+            dropout = 0.3,
+            
+            image_latent_size = 256,
+            text_latent_size = 256
+        )
         
+        model = TIPAE(cfg).to(device)
+        
+        # Loss and Optimizer
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    
+    scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=4000)
+    
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
-
     total_losses = []
     img_losses = []
     text_losses = []
     learning_rates = []
     
     lowest_loss = None
-    
-    # Loss and Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=4000)
     
     #last_epoch = model.load("vae_checkpoint.pth", optimizer)
     
@@ -479,10 +496,14 @@ def train(frame, device):
         
 #        for batch_idx, (img_x, tokens_x) in enumerate(tqdm(dataloader, leave=False, desc="Batch")):
         for batch_idx, (img_x, tokens_x) in enumerate(dataloader):
-        
+            if do_training:
+                model.train()
+                optimizer.zero_grad()
+            else:
+                model.eval()
+                
             batch_size = img_x.shape[0]
             
-            optimizer.zero_grad()
             img_out, tokens_logits_out, img_z_mean, text_z_mean = model(img_x, tokens_x)
 
             text_loss = F.cross_entropy(tokens_logits_out.view(-1, NUM_TOKENS), tokens_x.view(-1))
@@ -501,9 +522,11 @@ def train(frame, device):
             
             total_loss = text_term + img_term + alignment_loss
             
-            total_loss.backward()
-            optimizer.step()
-            scheduler.step()
+            if do_training:
+                total_loss.backward()
+                optimizer.step()
+                scheduler.step()
+                
             epoch_loss += total_loss.item()
             epoch_text_loss += text_term.item()
             epoch_img_loss += img_term.item()
@@ -546,7 +569,7 @@ def train(frame, device):
         
         print(f"Epoch {epoch+1}/{num_epochs} LR: {learning_rate:.6f} Loss: {epoch_loss:.6f} Text: {epoch_text_loss:.6f} Img: {epoch_img_loss:.6f} Align: {epoch_alignment_loss:.6f}")
         
-        if save_enabled:
+        if not do_training and save_enabled:
             folder = "checkpoints"
             path = torch_utils.create_directory(folder)
 
@@ -595,7 +618,7 @@ if __name__ == "__main__":
     
     sys.stdout.reconfigure(encoding='utf-8')
     
-    device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device_string = 'cpu'#'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using {device_string}")
     device = torch.device(device_string)
     
