@@ -415,9 +415,9 @@ def train(frame, device):
     BATCH_SIZE = 64
     save_enabled = True
     show_pca = True
-    num_objects = 12
+    num_objects = 1024
     
-    img_width = 32
+    img_width = 128
     img_height = img_width
     block_size = 256
     
@@ -427,9 +427,9 @@ def train(frame, device):
     
     # Hyperparameters
     # set a large initial lr as it'll be adjusted by the scheduler
-    learning_rate = .001
+    learning_rate = 1
     num_epochs = 1000000
-    logging_interval = 10
+    logging_interval = 50
     NUM_TOKENS = tokenizer.vocab_size()
 
     cfg = TIPAEConfig(
@@ -446,10 +446,10 @@ def train(frame, device):
         text_emb_size = 64,
         vocab_size = NUM_TOKENS,
         block_size = block_size,
-        dropout = 0.1,
+        dropout = 0.3,
         
-        image_latent_size = 64,
-        text_latent_size = 64
+        image_latent_size = 256,
+        text_latent_size = 256
     )
     
     model = TIPAE(cfg).to(device)
@@ -466,7 +466,7 @@ def train(frame, device):
     
     # Loss and Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    #scheduler = lrschedulers.NoamLR(optimizer, d_model=emb_size, warmup_steps=4000)
+    scheduler = lrschedulers.NoamLR(optimizer, d_model=emb_size, warmup_steps=4000)
     
     #last_epoch = model.load("vae_checkpoint.pth", optimizer)
     
@@ -502,6 +502,7 @@ def train(frame, device):
             
             total_loss.backward()
             optimizer.step()
+            scheduler.step()
             epoch_loss += total_loss.item()
             epoch_text_loss += text_term.item()
             epoch_img_loss += img_term.item()
@@ -519,15 +520,16 @@ def train(frame, device):
                 return
                     
             with torch.no_grad():
-            
-                tokens_recon = model.to_tokens(tokens_logits_out)
-                
-                recon_x = tokenizer.indices_to_text(tokens_x.cpu().tolist()[0], hide_pad=True)
-                recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
+
+                # Output if text loss has not converged
+                if text_term.item() > 0.01:
+                    tokens_recon = model.to_tokens(tokens_logits_out)
+                    
+                    recon_x = tokenizer.indices_to_text(tokens_x.cpu().tolist()[0], hide_pad=True)
+                    recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
+        
+                    print(f"{recon_x}\n=>\n{recon_out}")
     
-                print(f"{recon_x}\n=>\n{recon_out}")
-    
-                # First batch only
                 if frame and batch_idx%10==0:
                     show_image_list = generate_display_images(frame, model, img_x, img_out, tokenizer)
                     
@@ -541,7 +543,7 @@ def train(frame, device):
                     )
         
         
-        print(f"Epoch {epoch+1}/{num_epochs} Loss: {epoch_loss:.6f} Text: {epoch_text_loss:.6f} Img: {epoch_img_loss:.6f} Align: {epoch_alignment_loss:.6f}")
+        print(f"Epoch {epoch+1}/{num_epochs} LR: {learning_rate:.6f} Loss: {epoch_loss:.6f} Text: {epoch_text_loss:.6f} Img: {epoch_img_loss:.6f} Align: {epoch_alignment_loss:.6f}")
         
         if save_enabled:
             folder = "checkpoints"
