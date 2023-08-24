@@ -159,7 +159,7 @@ def train(frame, device):
     perceptual_loss = perceptual.PerceptualLoss().to(device)
 
     
-    obj_data = abo.load_objects(1024)
+    obj_data = abo.load_objects(16)
     image_metadata = abo.load_images()
     
     print(f"Num objects: {len(obj_data)}")

@@ -22,7 +22,8 @@ from ImageFrame import ImageLossFrame
 class TIPAEConfig():
     def __init__(self, img_width=128, img_height=128, channels=3, emb_size=256, 
                 num_layers=4, num_heads=2, patch_count=8, mlp_dim=1024, dim_head = 64, 
-                vocab_size=256, block_size=1024, dropout=0.1):
+                text_emb_size=64, vocab_size=256, block_size=1024, dropout=0.1,
+                image_latent_size=1024, text_latent_size=64):
         # Image settings
         self.img_width = img_width
         self.img_height = img_height
@@ -37,9 +38,14 @@ class TIPAEConfig():
         self.dim_head = dim_head
         
         # Text settings
+        self.text_emb_size = text_emb_size
         self.vocab_size = vocab_size
         self.block_size = block_size
         self.dropout = dropout
+        
+        # Multimodal settings
+        self.image_latent_size = image_latent_size
+        self.text_latent_size = text_latent_size
         
         assert img_width % patch_count == 0 and img_height % patch_count == 0, 'Image dimensions must be divisible by patch count'
         assert self.img_height % self.patch_height == 0 and self.img_width % self.patch_width == 0, 'Image dimensions must be divisible by the patch size.'
@@ -54,6 +60,8 @@ class TIPAE(nn.Module):
         
         assert self.cfg.img_height % self.cfg.patch_height == 0, 'Image height must be divisible by the patch height.'
         assert self.cfg.img_width % self.cfg.patch_width == 0, 'Image width must be divisible by the patch width.'
+
+        combined_latent_size = self.cfg.image_latent_size
         
         # Image encoder 
         
@@ -82,8 +90,12 @@ class TIPAE(nn.Module):
             dim_head = self.cfg.dim_head, 
             mlp_dim = self.cfg.mlp_dim)
 
+        self.image_projection = nn.Linear(emb_size * self.cfg.patch_count ** 2, combined_latent_size)
+        
         # Image decoder
 
+        self.image_unprojection = nn.Linear(combined_latent_size, emb_size * self.cfg.patch_count ** 2)
+        
         self.img_decoder = vit_pytorch.simple_vit.Transformer(
             dim = emb_size, 
             depth = self.cfg.num_layers, 
@@ -103,29 +115,33 @@ class TIPAE(nn.Module):
         )
         
         # Text encoder
+        text_emb_size = self.cfg.text_emb_size
         
-        self.text_embedding = nn.Embedding(self.cfg.vocab_size, self.cfg.emb_size)
+        self.text_embedding = nn.Embedding(self.cfg.vocab_size, text_emb_size)
         self.text_dropout = nn.Dropout(self.cfg.dropout)
         
-        self.text_pos_encoding = self.positional_encoding(self.cfg.block_size, self.cfg.emb_size)
+        self.text_pos_encoding = self.positional_encoding(self.cfg.block_size, text_emb_size)
         
         self.text_encoder = vit_pytorch.simple_vit.Transformer(
-            dim = emb_size, 
+            dim = text_emb_size, 
             depth = self.cfg.num_layers, 
             heads = self.cfg.num_heads, 
             dim_head = self.cfg.dim_head, 
             mlp_dim = self.cfg.mlp_dim)
             
+        self.text_projection = nn.Linear(self.cfg.block_size * text_emb_size, combined_latent_size)
+    
         # Text decoder
-        
+        self.text_unprojection = nn.Linear(combined_latent_size, self.cfg.block_size * text_emb_size)
+
         self.text_decoder = vit_pytorch.simple_vit.Transformer(
-            dim = emb_size, 
+            dim = text_emb_size, 
             depth = self.cfg.num_layers, 
             heads = self.cfg.num_heads, 
             dim_head = self.cfg.dim_head, 
             mlp_dim = self.cfg.mlp_dim)
             
-        self.text_fc = nn.Linear(self.cfg.emb_size, self.cfg.vocab_size)
+        self.text_fc = nn.Linear(self.cfg.text_emb_size, self.cfg.vocab_size)
         # Tie embedding weights with fc weights
         self.text_fc.weight = self.text_embedding.weight
     
@@ -153,53 +169,75 @@ class TIPAE(nn.Module):
         assert self.cfg.channels == img.shape[1], 'Image channels (shape[1]) must match ViTAE channels.'
         assert self.cfg.img_height == img.shape[2] and self.cfg.img_width == img.shape[3], 'Image dimensions (shape[2] and shape[3]) must match ViTAE dimensions.'
         
-        img_z = self.img_encode(img)
-        img_z_mean = torch.mean(img_z, dim=1)
+        img_z, img_z_mean = self.img_encode(img)
+                
+        text_z, text_z_mean = self.text_encode(tokens)
         
-        text_z = self.text_encode(tokens)
-        text_z_mean = torch.mean(text_z, dim=1)
+        # Concatenate the image and text latent spaces
+        #combined_z = torch.cat([img_z_mean, text_z_mean], dim=1)
+        #combined_z = img_z_mean + text_z_mean
         
-        img_x = self.img_decode(img_z)
+        img_x = self.img_decode(img_z_mean)
         
-        text_x = self.text_decode(text_z)
+        text_x = self.text_decode(text_z_mean)
         
-        return img_x, text_x
+        return img_x, text_x, img_z_mean, text_z_mean
 
     def text_encode(self, tokens):
         emb = self.text_embedding(tokens)
         
+        batch_size = tokens.shape[0]
         pos_emb = self.text_pos_encoding[:, :emb.size(1)].to(tokens.device)
         
         emb = self.text_dropout(emb + pos_emb)
         
         z = self.text_encoder(emb)
         
-        return z
+        # Projection
+        z_projected = self.text_projection(z.view(batch_size, -1))
         
-    def text_decode(self, z):
+        return z, z_projected
         
-        emb = self.text_decoder(z)
+    def text_decode(self, combined_z):
+        batch_size = combined_z.shape[0]
+        
+        # Unprojection
+        z_unprojected = self.text_unprojection(combined_z).view(batch_size, -1, self.cfg.text_emb_size)
+        
+        emb = self.text_decoder(z_unprojected)
         
         x = self.text_fc(emb)
         
         return x
         
+    def to_tokens(self, x):
+        probs = F.softmax(x, dim=-1)
+        tokens_recon = torch.argmax(probs, dim=-1)
+        
+        return tokens_recon
+        
     def img_encode(self, img):
         device = img.device
+        batch_size = img.shape[0]
+        
         x = self.to_patch_embedding(img)
         x += self.img_pos_embedding.to(device, dtype=x.dtype)
         
         z = self.img_encoder(x)
         
-        return z
+        # Projection
+        z_projected = self.image_projection(z.view(batch_size, -1))
         
-    def img_decode(self, z):
+        return z, z_projected
         
-        batch_size = z.shape[0]
+    def img_decode(self, combined_z):
         
-        seq_length = self.cfg.patch_count * self.cfg.patch_count
+        batch_size = combined_z.shape[0]
 
-        x = self.img_decoder(z)
+        seq_len = self.cfg.patch_count**2
+        z_unprojected = self.image_unprojection(combined_z).view(batch_size, seq_len, -1)
+
+        x = self.img_decoder(z_unprojected)
         
         img = self.from_patch_embedding(x)
         
@@ -221,7 +259,6 @@ class TIPAE(nn.Module):
             'config': self.cfg
         }
         torch.save(checkpoint, filepath)
-        #print(f'Checkpoint saved to {filepath}')
 
     def load(self, filepath, optimizer=None):
         """
@@ -329,7 +366,7 @@ def prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height
     
     return dataloader
 
-def generate_display_images(frame, model, real_images, outputs):
+def generate_display_images(frame, model, real_images, outputs, tokenizer):
     show_image_list = []
     
     with torch.no_grad():
@@ -342,21 +379,34 @@ def generate_display_images(frame, model, real_images, outputs):
             pil_image = torch_utils.tensor_to_image(out.detach().cpu())
             show_image_list.append((idx+frame.cols,pil_image))
         
-        z1 = model.img_encode(real_images[0].unsqueeze(0))
-        z2 = model.img_encode(real_images[4].unsqueeze(0))
+        for idx in range(frame.cols):
+            _,z1 = model.img_encode(real_images[idx].unsqueeze(0))
+            token_logits_out = model.text_decode(z1)
+            tokens_recon = model.to_tokens(token_logits_out)
+            recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
+            
+            _,z2 = model.text_encode(tokens_recon)
+            img_out = model.img_decode(z2)
+            
+            pil_image = torch_utils.tensor_to_image(img_out[0].detach().cpu())
+            show_image_list.append((idx+2*frame.cols,pil_image))
+            
+            print(f"{idx} ======> {recon_out}")
+    
+        # z2 = model.img_encode(real_images[4].unsqueeze(0))
         
-        num_lerps = frame.cols
-        for i in range(num_lerps):
-            alpha = i / num_lerps
+        # num_lerps = frame.cols
+        # for i in range(num_lerps):
+            # alpha = i / num_lerps
             
-            latent_lerp = torch_utils.slerp(z1, z2, alpha)
+            # latent_lerp = torch_utils.slerp(z1, z2, alpha)
             
-            out = model.img_decode(latent_lerp)[0]
+            # out = model.img_decode(latent_lerp)[0]
             
-            #out = latent_vectors[i].view(-1,img_size,img_size).clone().detach()
-            #out = out.expand(3, -1, -1)
-            pil_image = torch_utils.tensor_to_image(out.detach().cpu())
-            show_image_list.append((i+frame.cols*2,pil_image))
+            # #out = latent_vectors[i].view(-1,img_size,img_size).clone().detach()
+            # #out = out.expand(3, -1, -1)
+            # pil_image = torch_utils.tensor_to_image(out.detach().cpu())
+            # show_image_list.append((i+frame.cols*2,pil_image))
     
     return show_image_list
 
@@ -365,10 +415,10 @@ def train(frame, device):
     BATCH_SIZE = 64
     save_enabled = True
     show_pca = True
-    num_objects = 16
+    num_objects = 12
     
-    img_width = 128
-    img_height = 128
+    img_width = 32
+    img_height = img_width
     block_size = 256
     
     tokenizer = tokenization.UTF8Tokenizer()
@@ -383,18 +433,23 @@ def train(frame, device):
     NUM_TOKENS = tokenizer.vocab_size()
 
     cfg = TIPAEConfig(
-        img_width=img_width,
-        img_height=img_height,
-        channels=3,
-        emb_size=64,
-        num_layers=4,
-        num_heads=4,
-        patch_count=8,
-        mlp_dim=1024,
+        img_width = img_width,
+        img_height = img_height,
+        channels = 3,
+        emb_size = 64,
+        num_layers = 4,
+        num_heads = 4,
+        patch_count = 8,
+        mlp_dim = 64*4,
         dim_head = 64,
+        
+        text_emb_size = 64,
         vocab_size = NUM_TOKENS,
         block_size = block_size,
         dropout = 0.1,
+        
+        image_latent_size = 64,
+        text_latent_size = 64
     )
     
     model = TIPAE(cfg).to(device)
@@ -419,6 +474,7 @@ def train(frame, device):
         epoch_loss = 0
         epoch_img_loss = 0
         epoch_text_loss = 0
+        epoch_alignment_loss = 0
         
 #        for batch_idx, (img_x, tokens_x) in enumerate(tqdm(dataloader, leave=False, desc="Batch")):
         for batch_idx, (img_x, tokens_x) in enumerate(dataloader):
@@ -426,10 +482,12 @@ def train(frame, device):
             batch_size = img_x.shape[0]
             
             optimizer.zero_grad()
-            img_out, tokens_out = model(img_x, tokens_x)
+            img_out, tokens_logits_out, img_z_mean, text_z_mean = model(img_x, tokens_x)
 
-            text_loss = F.cross_entropy(tokens_out.view(-1, NUM_TOKENS), tokens_x.view(-1))
+            text_loss = F.cross_entropy(tokens_logits_out.view(-1, NUM_TOKENS), tokens_x.view(-1))
             img_loss = F.binary_cross_entropy(img_out.view(batch_size,-1), img_x.view(batch_size,-1), reduction='mean')
+            
+            alignment_loss = F.mse_loss(img_z_mean, text_z_mean)
             
             alpha = 1.0
             text_term = text_loss * alpha
@@ -437,13 +495,17 @@ def train(frame, device):
             beta = 1.0
             img_term = img_loss * beta
             
-            total_loss = text_term + img_term
+            gamma = 1.0
+            alignment_term = alignment_loss * gamma
+            
+            total_loss = text_term + img_term + alignment_loss
             
             total_loss.backward()
             optimizer.step()
             epoch_loss += total_loss.item()
             epoch_text_loss += text_term.item()
             epoch_img_loss += img_term.item()
+            epoch_alignment_loss += alignment_term.item()
             model.epoch = epoch
             
             total_losses.append(total_loss.item())
@@ -458,10 +520,8 @@ def train(frame, device):
                     
             with torch.no_grad():
             
-                probs = F.softmax(tokens_out, dim=-1)
-                tokens_recon = torch.argmax(probs, dim=-1)
-                #print(f"{tokens_x.shape} {tokens_recon.shape}")
-
+                tokens_recon = model.to_tokens(tokens_logits_out)
+                
                 recon_x = tokenizer.indices_to_text(tokens_x.cpu().tolist()[0], hide_pad=True)
                 recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
     
@@ -469,7 +529,7 @@ def train(frame, device):
     
                 # First batch only
                 if frame and batch_idx%10==0:
-                    show_image_list = generate_display_images(frame, model, img_x, img_out)
+                    show_image_list = generate_display_images(frame, model, img_x, img_out, tokenizer)
                     
                     wx.CallAfter(
                         frame.show_images, 
@@ -481,7 +541,7 @@ def train(frame, device):
                     )
         
         
-        print(f"Epoch Loss: {epoch_loss:.6f} Text: {epoch_text_loss:.6f} Img: {epoch_img_loss:.6f}")
+        print(f"Epoch {epoch+1}/{num_epochs} Loss: {epoch_loss:.6f} Text: {epoch_text_loss:.6f} Img: {epoch_img_loss:.6f} Align: {epoch_alignment_loss:.6f}")
         
         if save_enabled:
             folder = "checkpoints"
@@ -536,12 +596,13 @@ if __name__ == "__main__":
     print(f"Using {device_string}")
     device = torch.device(device_string)
     
-    show_ui = False
+    show_ui = True
     
     seed = 42
     torch_utils.seed_everywhere(seed)
     
     #exercise_model()
+    #exit()
     
     if show_ui:
         app = wx.App(False)
