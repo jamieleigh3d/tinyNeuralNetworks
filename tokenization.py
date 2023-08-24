@@ -50,7 +50,7 @@ class Tokenizer(ABC):
     def indices_to_texts(self, indices, masks=None, hide_pad=True):
         """Converts a list of lists of indices back to their original strings."""
         idx_v = self.idx_vocab_no_pad if hide_pad else self.idx_vocab
-
+        
         if masks:
             assert len(indices) == len(masks), f"Mask should be same length as indices. Expected {len(indices)} found {len(masks)}"
             return [''.join([self._mask_filter(idx_v[idx], mask) for idx, mask in zip(seq, mask)]) for seq, mask in zip(indices, masks)]

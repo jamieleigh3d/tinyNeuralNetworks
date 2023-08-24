@@ -1,14 +1,23 @@
+import wx
+import time
+import threading
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader, TensorDataset
 from einops import rearrange
 from einops.layers.torch import Rearrange
 import vit_pytorch
 from vit_pytorch.extractor import Extractor
 import math
+from tqdm import tqdm, trange
 
 import vitae as vt
 import text_transformer as tt
+import abo
+import abo_utils
+import tokenization
+from ImageFrame import ImageLossFrame
 
 class TIPAEConfig():
     def __init__(self, img_width=128, img_height=128, channels=3, emb_size=256, 
@@ -275,6 +284,225 @@ class TIPAE(nn.Module):
 
         return model, optimizer
 
+def prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height, block_size, device):
+    
+    obj_data = abo.load_objects(num_objects)
+    image_metadata = abo.load_images()
+    
+    print(f"Num objects: {len(obj_data)}")
+    print(f"Num images: {len(image_metadata)}")
+    print(f"Batch size: {BATCH_SIZE}")
+    
+    img_x_tensor = abo_utils.preprocess_image_batch(obj_data, image_metadata, img_width, img_height, device)
+    
+    names_x = [abo.get_itemname_for_object(obj) for obj in obj_data]
+    
+    tokenizer.build_vocab(names_x)
+    
+    tokens_x = tokenizer.texts_to_indices(names_x)
+    
+    pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
+    sta_idx = tokenizer.special_token_to_index(tokenizer.sta_token)
+    eos_idx = tokenizer.special_token_to_index(tokenizer.eos_token)
+    
+    for t in tokens_x:
+        # First truncate, -2 to leave room for sta and eos
+        t[:] = t[:block_size-2]
+        
+        # Wrap with start and end tokens
+        t.insert(0, sta_idx)
+        t.append(eos_idx)
+        
+        # Then pad as necessary
+        while len(t) < block_size:
+            t.append(pad_idx)
+    
+    recon_x = tokenizer.indices_to_texts(tokens_x, hide_pad=True)
+    
+    [print(f"{x}\n") for x in recon_x]
+    
+    # Prepare data for DataLoader
+    
+    tokens_x_tensor = torch.tensor(tokens_x).to(device)
+    tensor_dataset = TensorDataset(img_x_tensor, tokens_x_tensor)
+    dataloader = DataLoader(tensor_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    
+    return dataloader
+
+def generate_display_images(frame, model, real_images, outputs):
+    show_image_list = []
+    
+    with torch.no_grad():
+        model.eval()
+        for idx, img in enumerate(real_images[:frame.cols]):
+            pil_image = torch_utils.tensor_to_image(img.detach().cpu())
+            show_image_list.append((idx, pil_image))
+    
+        for idx, out in enumerate(outputs[:frame.cols]):
+            pil_image = torch_utils.tensor_to_image(out.detach().cpu())
+            show_image_list.append((idx+frame.cols,pil_image))
+        
+        z1 = model.img_encode(real_images[0].unsqueeze(0))
+        z2 = model.img_encode(real_images[4].unsqueeze(0))
+        
+        num_lerps = frame.cols
+        for i in range(num_lerps):
+            alpha = i / num_lerps
+            
+            latent_lerp = torch_utils.slerp(z1, z2, alpha)
+            
+            out = model.img_decode(latent_lerp)[0]
+            
+            #out = latent_vectors[i].view(-1,img_size,img_size).clone().detach()
+            #out = out.expand(3, -1, -1)
+            pil_image = torch_utils.tensor_to_image(out.detach().cpu())
+            show_image_list.append((i+frame.cols*2,pil_image))
+    
+    return show_image_list
+
+def train(frame, device):
+
+    BATCH_SIZE = 64
+    save_enabled = True
+    show_pca = True
+    num_objects = 16
+    
+    img_width = 128
+    img_height = 128
+    block_size = 256
+    
+    tokenizer = tokenization.UTF8Tokenizer()
+    
+    dataloader = prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height, block_size, device)
+    
+    # Hyperparameters
+    # set a large initial lr as it'll be adjusted by the scheduler
+    learning_rate = .001
+    num_epochs = 1000000
+    logging_interval = 10
+    NUM_TOKENS = tokenizer.vocab_size()
+
+    cfg = TIPAEConfig(
+        img_width=img_width,
+        img_height=img_height,
+        channels=3,
+        emb_size=64,
+        num_layers=4,
+        num_heads=4,
+        patch_count=8,
+        mlp_dim=1024,
+        dim_head = 64,
+        vocab_size = NUM_TOKENS,
+        block_size = block_size,
+        dropout = 0.1,
+    )
+    
+    model = TIPAE(cfg).to(device)
+        
+    print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
+    
+
+    total_losses = []
+    img_losses = []
+    text_losses = []
+    learning_rates = []
+    
+    lowest_loss = None
+    
+    # Loss and Optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    #scheduler = lrschedulers.NoamLR(optimizer, d_model=emb_size, warmup_steps=4000)
+    
+    #last_epoch = model.load("vae_checkpoint.pth", optimizer)
+    
+    for epoch in range(num_epochs): #, desc="Training", leave=False):
+        epoch_loss = 0
+        epoch_img_loss = 0
+        epoch_text_loss = 0
+        
+#        for batch_idx, (img_x, tokens_x) in enumerate(tqdm(dataloader, leave=False, desc="Batch")):
+        for batch_idx, (img_x, tokens_x) in enumerate(dataloader):
+        
+            batch_size = img_x.shape[0]
+            
+            optimizer.zero_grad()
+            img_out, tokens_out = model(img_x, tokens_x)
+
+            text_loss = F.cross_entropy(tokens_out.view(-1, NUM_TOKENS), tokens_x.view(-1))
+            img_loss = F.binary_cross_entropy(img_out.view(batch_size,-1), img_x.view(batch_size,-1), reduction='mean')
+            
+            alpha = 1.0
+            text_term = text_loss * alpha
+
+            beta = 1.0
+            img_term = img_loss * beta
+            
+            total_loss = text_term + img_term
+            
+            total_loss.backward()
+            optimizer.step()
+            epoch_loss += total_loss.item()
+            epoch_text_loss += text_term.item()
+            epoch_img_loss += img_term.item()
+            model.epoch = epoch
+            
+            total_losses.append(total_loss.item())
+            img_losses.append(text_term.item())
+            text_losses.append(img_term.item())
+            
+            learning_rate = optimizer.param_groups[0]["lr"]
+            learning_rates.append(learning_rate)
+            
+            if frame and frame.done:
+                return
+                    
+            with torch.no_grad():
+            
+                probs = F.softmax(tokens_out, dim=-1)
+                tokens_recon = torch.argmax(probs, dim=-1)
+                #print(f"{tokens_x.shape} {tokens_recon.shape}")
+
+                recon_x = tokenizer.indices_to_text(tokens_x.cpu().tolist()[0], hide_pad=True)
+                recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
+    
+                print(f"{recon_x}\n=>\n{recon_out}")
+    
+                # First batch only
+                if frame and batch_idx%10==0:
+                    show_image_list = generate_display_images(frame, model, img_x, img_out)
+                    
+                    wx.CallAfter(
+                        frame.show_images, 
+                        show_image_list, 
+                        total_losses=total_losses,
+                        r_losses=img_losses,
+                        p_losses=text_losses,
+                        learning_rates=learning_rates
+                    )
+        
+        
+        print(f"Epoch Loss: {epoch_loss:.6f} Text: {epoch_text_loss:.6f} Img: {epoch_img_loss:.6f}")
+        
+        if save_enabled:
+            folder = "checkpoints"
+            path = torch_utils.create_directory(folder)
+
+            if (epoch+1) % logging_interval == 0:
+                model.save(path / f"tipae_checkpoint.epoch{epoch+1}.pth", optimizer)
+            
+            if lowest_loss is None:
+                lowest_loss = total_loss+1
+            if total_loss < lowest_loss:
+                lowest_loss = total_loss
+                model.save(path / "tipae_checkpoint.best.pth", optimizer)
+
+def start_training_thread(frame,device):
+    t = threading.Thread(target=train, args=(frame,device,))
+    t.daemon = True
+
+    t.start()
+    return t
+    
 
 def exercise_model():
     
@@ -297,17 +525,34 @@ def exercise_model():
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
     
-
 if __name__ == "__main__":
     import torch_utils
+    
+    import sys
+    
+    sys.stdout.reconfigure(encoding='utf-8')
     
     device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using {device_string}")
     device = torch.device(device_string)
     
+    show_ui = False
+    
     seed = 42
     torch_utils.seed_everywhere(seed)
     
-    exercise_model()
+    #exercise_model()
+    
+    if show_ui:
+        app = wx.App(False)
+        frame = ImageLossFrame(None, 'TIPAE')
+        frame.Show()
+        frame.thread = start_training_thread(frame, device)
+        
+        app.MainLoop()
+    else:
+        train(None,device)
+        print("Training done!")
+    
     
     print("Done!")

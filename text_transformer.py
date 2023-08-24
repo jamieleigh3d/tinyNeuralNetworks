@@ -192,7 +192,7 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
             epoch_loss += loss.item()
         
         avg_epoch_loss = epoch_loss / len(dataloader)
-        print(f"Batch Loss: {avg_epoch_loss}")
+        print(f"Epoch Loss: {avg_epoch_loss}")
         
         if save_enabled:
             folder = "checkpoints"
