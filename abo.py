@@ -17,9 +17,13 @@ def is_keyword(sub_string, full_string):
     
 def filter(json_obj):
     name = get_itemname_for_object(json_obj)
-    #if name is None:
-    #    return False
+    if name is None:
+        return False
     #print(name)
+    
+    if not main_image_id_tag in json_obj:
+        return False
+    
     keywords = get_keywords_for_object(json_obj)
     #if keywords is None:
     #    return False

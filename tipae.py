@@ -18,6 +18,7 @@ import abo
 import abo_utils
 import tokenization
 from ImageFrame import ImageLossFrame
+import lrschedulers
 
 class TIPAEConfig():
     def __init__(self, img_width=128, img_height=128, channels=3, emb_size=256, 
@@ -436,11 +437,11 @@ def train(frame, device):
         img_width = img_width,
         img_height = img_height,
         channels = 3,
-        emb_size = 64,
+        emb_size = 256,
         num_layers = 4,
         num_heads = 4,
         patch_count = 8,
-        mlp_dim = 64*4,
+        mlp_dim = 256*4,
         dim_head = 64,
         
         text_emb_size = 64,
@@ -466,7 +467,7 @@ def train(frame, device):
     
     # Loss and Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = lrschedulers.NoamLR(optimizer, d_model=emb_size, warmup_steps=4000)
+    scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=4000)
     
     #last_epoch = model.load("vae_checkpoint.pth", optimizer)
     
