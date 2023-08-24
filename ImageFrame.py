@@ -64,11 +64,11 @@ class ImageLossFrame(wx.Frame):
     def update_plot(self, total_losses, avg_losses, r_losses, learning_rates, p_losses):
         ax0 = self.axes[0]
         ax0.clear()
-        if r_losses:
+        if r_losses is not None:
             ax0.plot(r_losses)
-        if total_losses:
+        if total_losses is not None:
             ax0.plot(total_losses)
-        if avg_losses:
+        if avg_losses is not None:
             ax0.plot(avg_losses)
         ax0.set_xlabel('Epoch')
         ax0.set_ylabel('Loss')
@@ -77,7 +77,7 @@ class ImageLossFrame(wx.Frame):
         ax1 = self.axes[1]
         ax1.clear()
         ax1.clear()
-        if learning_rates:
+        if learning_rates is not None:
             ax1.plot(learning_rates)
         ax1.set_xlabel('Step')
         ax1.set_ylabel('LR')
@@ -85,7 +85,7 @@ class ImageLossFrame(wx.Frame):
         
         ax2 = self.axes[2]
         ax2.clear()
-        if p_losses:
+        if p_losses is not None:
             ax2.plot(p_losses)
         ax2.set_xlabel('Epoch')
         ax2.set_ylabel('Loss')
@@ -128,8 +128,9 @@ class ImageLossFrame(wx.Frame):
 
     def show_images(self, idx_images, total_losses=None, avg_losses=None, r_losses=None, learning_rates=None, p_losses=None, latent_vectors=None):
         
+        print("show_images 1")
         self.update_plot(total_losses, avg_losses, r_losses, learning_rates, p_losses)
-        
+        print("show_images 2")
         for (idx, img) in idx_images:
             width, height = (128,128)
             if img.width < width or img.height < height:
@@ -137,8 +138,9 @@ class ImageLossFrame(wx.Frame):
             bitmap = self.PIL_to_wxBitmap(img)
             if idx >= 0 and idx < len(self.image_boxes):
                 self.image_boxes[idx].SetBitmap(bitmap)
-        
+        print("show_images 3")
         if latent_vectors is not None:
             self.show_pca(latent_vectors)
-        
+        print("show_images 4")
         self.canvas.draw()
+        print("show_images 5")

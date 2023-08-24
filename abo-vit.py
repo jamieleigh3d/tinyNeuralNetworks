@@ -22,65 +22,15 @@ import sys
 from ImageFrame import ImageLossFrame
 import vae
 import abo as abo
-import torch_utils as utils
+import torch_utils
 import vitae
 import lrschedulers
+import abo_utils
+import perceptual
 
 sys.stdout.reconfigure(encoding='utf-8')
 
 
-def tokenize_without_punctuation(text):
-    tk = WhitespaceTokenizer()
-    tokens = tk.tokenize(text.lower())
-    tokens_without_punctuation = [token for token in tokens if token not in punctuation]
-    return tokens_without_punctuation
-    
-
-def resize_with_padding(pil_image, target_size):
-    # Calculate padding dimensions
-    width, height = pil_image.size
-    target_width, target_height = target_size
-
-    if width / height > target_width / target_height:
-        new_width = target_width
-        new_height = int(height * (target_width / width))
-    else:
-        new_width = int(width * (target_height / height))
-        new_height = target_height
-
-    # Resize the image
-    resized_image = pil_image.resize((new_width, new_height))
-
-    # Create a new image with padding
-    padded_image = PILImage.new("RGB", target_size, "white")
-    x_offset = (target_width - new_width) // 2
-    y_offset = (target_height - new_height) // 2
-    padded_image.paste(resized_image, (x_offset, y_offset))
-
-    return padded_image
-
-# Define a perceptual loss function using feature extractor
-class PerceptualLoss(nn.Module):
-    def __init__(self, feature_extractor):
-        super(PerceptualLoss, self).__init__()
-        
-        self.feature_extractor = feature_extractor
-        
-    def forward(self, x, y):
-        features_x = self.feature_extractor(x)
-        features_y = self.feature_extractor(y)
-        loss = F.mse_loss(features_x, features_y)
-        return loss
-
-
-
-def vgg_preprocess(tensor):
-    """Adjust the tensor values to the range expected by VGG."""
-    # Mean and std values for ImageNet dataset, on which VGG was trained
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(-1, 3, 1, 1).to(tensor.device)
-    std = torch.tensor([0.229, 0.224, 0.225]).view(-1, 3, 1, 1).to(tensor.device)
-    
-    return (tensor - mean) / std
 
 # Training Loop
 def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_images, idx, scheduler=None):
@@ -139,32 +89,6 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     
     return display_outputs, total_loss.item(), r_term.item(), p_term.item(), latent_vectors
     
-def preprocess_image_batch(obj_batch, image_metadata, img_size):
-    image_batch = []
-    
-    # Load and preprocess the images for the objects into tensors
-    
-    for obj in obj_batch:
-        img_path = abo.get_filepath_for_object(obj, image_metadata)
-        if img_path is not None:
-            pil_image = PILImage.open(img_path)
-            pil_image = resize_with_padding(pil_image, (img_size,img_size))
-            #name = abo.get_itemname_for_object(obj)
-            #if name is not None:
-                #tokens = tokenize_without_punctuation(name)
-                #tokenized_names.append(tokens)
-            if (pil_image.getbands() != 3):
-                pil_image = pil_image.convert('RGB')
-            tensor_image = utils.image_to_tensor(pil_image).to(device)
-            image_batch.append(tensor_image)
-                
-    
-    # Flatten the image
-    if len(image_batch)==0:
-        return None
-        
-    real_images = torch.stack(image_batch).view(len(image_batch), -1)
-    return real_images
     
 def train(frame, device):
 
@@ -207,13 +131,7 @@ def train(frame, device):
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     #scheduler = lrschedulers.NoamLR(optimizer, d_model=emb_size, warmup_steps=4000)
 
-    # Load a pretrained feature extractor (e.g., VGG16)
-    feature_extractor = tvm.vgg16(weights=tvm.VGG16_Weights.IMAGENET1K_FEATURES).features.to(device)
-    feature_extractor.eval()
-    for param in feature_extractor.parameters():
-        param.requires_grad = False
-
-    perceptual_loss = PerceptualLoss(feature_extractor)
+    perceptual_loss = perceptual.PerceptualLoss().to(device)
 
     
     obj_data = abo.load_objects()
@@ -223,7 +141,7 @@ def train(frame, device):
     print(f"Num images: {len(image_metadata)}")
     print(f"Batch size: {batch_size}")
     
-    obj_data = obj_data
+    obj_data = obj_data[:64]
     
     print(f"Using num objects: {len(obj_data)}")
     
@@ -238,16 +156,18 @@ def train(frame, device):
     num_batches = (len(obj_data) + batch_size - 1) // batch_size
     print(f"num_batches: {num_batches}")
     lowest_loss = None
+    
     #last_epoch = model.load("vae_checkpoint.pth", optimizer)
+    
     for epoch in trange(num_epochs, desc="Training"):
         total_loss = 0
         r_loss = 0
         learning_rate = 0
         p_loss = 0
         
-        for idx, obj_batch in tqdm(enumerate(utils.batches(obj_data, batch_size)), leave=False, total=num_batches, desc="Batch"):
+        for idx, obj_batch in tqdm(enumerate(torch_utils.batches(obj_data, batch_size)), leave=False, total=num_batches, desc="Batch"):
             
-            real_images = preprocess_image_batch(obj_batch, image_metadata, img_size)
+            real_images = abo_utils.preprocess_image_batch(obj_batch, image_metadata, img_size, device)
             
             outputs,loss,r_term,p_term,lv = train_epoch(model, perceptual_loss, optimizer, epoch, frame, obj_batch, real_images, idx)
             latent_vectors = lv
@@ -269,17 +189,17 @@ def train(frame, device):
                 
                 show_image_list = []
                 # First batch only
-                if frame and idx%10==0:
+                if frame and idx==0:
                     with torch.no_grad():
                         model.eval()
                         # First time only
 #                        if (epoch+1) == logging_interval:
                         for idx, img in enumerate(real_images[:frame.cols]):
-                            pil_image = utils.tensor_to_image(img.view(3,img_size,img_size).detach().cpu())
+                            pil_image = torch_utils.tensor_to_image(img.view(3,img_size,img_size).detach().cpu())
                             show_image_list.append((idx, pil_image))
                     
                         for idx, out in enumerate(outputs[:frame.cols]):
-                            pil_image = utils.tensor_to_image(out.detach().cpu())
+                            pil_image = torch_utils.tensor_to_image(out.detach().cpu())
                             show_image_list.append((idx+frame.cols,pil_image))
                         
                         z = model.encode(real_images[0].view(-1,3,img_size, img_size))
@@ -292,26 +212,38 @@ def train(frame, device):
                         for i in range(num_lerps):
                             alpha = i / num_lerps
                             
-                            latent_lerp = utils.slerp(z, z2, alpha)
+                            latent_lerp = torch_utils.slerp(z, z2, alpha)
                             
                             out = model.decode(latent_lerp)[0]
                             
                             #out = latent_vectors[i].view(-1,img_size,img_size).clone().detach()
                             #out = out.expand(3, -1, -1)
-                            pil_image = utils.tensor_to_image(out.detach().cpu())
+                            pil_image = torch_utils.tensor_to_image(out.detach().cpu())
                             show_image_list.append((i+frame.cols*2,pil_image))
                     
                     if not show_pca:
                         latent_vectors = None
                     
-                    wx.CallAfter(frame.show_images, show_image_list, total_losses, r_losses, learning_rates, p_losses, latent_vectors)
+                    wx.CallAfter(
+                        frame.show_images, 
+                        show_image_list, 
+                        total_losses=total_losses,
+                        r_losses=r_losses,
+                        p_losses=p_losses,
+                        learning_rates=learning_rates,
+                        latent_vectors=latent_vectors
+                    )
         
         if save_enabled:
+            folder = "checkpoints"
+            path = torch_utils.create_directory(folder)
+
+            model.save(path / f"vae_checkpoint.epoch{epoch}.pth", optimizer, epoch)
             if lowest_loss is None:
                 lowest_loss = total_loss+1
             if total_loss < lowest_loss:
                 lowest_loss = total_loss
-                model.save("vae_checkpoint.pth", optimizer, epoch)
+                model.save(path / "vae_checkpoint.best.pth", optimizer, epoch)
 
 
 def test_data(frame, device):
@@ -356,14 +288,7 @@ def test_data(frame, device):
     
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
-    # Load a pretrained feature extractor (e.g., VGG16)
-    feature_extractor = tvm.vgg16(weights=tvm.VGG16_Weights.IMAGENET1K_FEATURES).features.to(device)
-    feature_extractor.eval()
-    for param in feature_extractor.parameters():
-        param.requires_grad = False
-
-    perceptual_loss = PerceptualLoss(feature_extractor)
-
+    perceptual_loss = perceptual.PerceptualLoss().to(device)
     
     obj_data = abo.load_objects()
     image_metadata = abo.load_images()
@@ -387,14 +312,14 @@ def test_data(frame, device):
         model.eval()
         num_batches = (len(obj_data) + batch_size - 1) // batch_size
         
-        for batch_idx, obj_batch in tqdm(enumerate(utils.batches(obj_data, batch_size)), leave=True, total=num_batches, desc="Batch"):
+        for batch_idx, obj_batch in tqdm(enumerate(torch_utils.batches(obj_data, batch_size)), leave=True, total=num_batches, desc="Batch"):
             
-            real_images = preprocess_image_batch(obj_batch, image_metadata, img_size)
+            real_images = abo_utils.preprocess_image_batch(obj_batch, image_metadata, img_size, device)
 
             outputs,z = model(real_images.view(-1,channels,img_size, img_size))
             z = z.view(outputs.shape[0], -1).detach().cpu().tolist()
-            latent_vectors.extend(z)
-            #latent_vectors=z
+            #latent_vectors.extend(z)
+            latent_vectors=z
 
             # Compute reconstruction BCE loss
             recon_loss = F.binary_cross_entropy(outputs.view(-1,channels*img_size*img_size), real_images, reduction='mean')
@@ -430,11 +355,11 @@ def test_data(frame, device):
                 show_image_list = []
                 
                 for idx, img in enumerate(real_images[:frame.cols]):
-                    pil_image = utils.tensor_to_image(img.view(channels,img_size,img_size).detach().cpu())
+                    pil_image = torch_utils.tensor_to_image(img.view(channels,img_size,img_size).detach().cpu())
                     show_image_list.append((idx, pil_image))
                 
                 for idx, out in enumerate(outputs[:frame.cols]):
-                    pil_image = utils.tensor_to_image(out.detach().cpu())
+                    pil_image = torch_utils.tensor_to_image(out.detach().cpu())
                     show_image_list.append((idx+frame.cols,pil_image))
                 
                 print(f" Batch {batch_idx}: avg_loss={avg_loss:.4f}")
@@ -446,7 +371,8 @@ def test_data(frame, device):
                     avg_losses=avg_losses,
                     r_losses=r_losses,
                     p_losses=p_losses,
-                    latent_vectors=latent_vectors)
+                    latent_vectors=latent_vectors
+                )
     
 
 def start_training_thread(frame,device):
@@ -506,14 +432,14 @@ if __name__ == "__main__":
     show_ui = True
     
     seed = 42
-    utils.seed_everywhere(seed)
+    torch_utils.seed_everywhere(seed)
     
     if show_ui:
         app = wx.App(False)
         frame = ImageLossFrame(None, 'Image Processing GUI')
         frame.Show()
-        #frame.thread = start_training_thread(frame, device)
-        frame.thread = start_testing_thread(frame, device)
+        frame.thread = start_training_thread(frame, device)
+        #frame.thread = start_testing_thread(frame, device)
         
         app.MainLoop()
     else:
