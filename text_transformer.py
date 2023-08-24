@@ -38,8 +38,8 @@ class TextTransformer(nn.Module):
     def forward(self, x, padding_mask=None, look_ahead_mask=None):
         emb = self.embedding(x)
         
-        t = x.shape[1]
-        positions = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
+        #t = x.shape[1]
+        #positions = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
         #pos_emb = self.pos_embedding(positions)
         pos_emb = self.pos_enc[:, :emb.size(1)].to(x.device)
         

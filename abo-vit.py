@@ -127,7 +127,7 @@ def train(frame, device):
     # set a large initial lr as it'll be adjusted by the scheduler
     learning_rate = .001
     num_epochs = 1000000
-    logging_interval = 1
+    logging_interval = 10
 
     img_width=128
     img_height=128
@@ -205,31 +205,32 @@ def train(frame, device):
             if frame and frame.done:
                 return
             
-            if (epoch+1) % logging_interval == 0:
+        
+            show_image_list = []
+            # First batch only
+            if frame and idx%10==0:
+                show_image_list = generate_display_images(frame, model, real_images, outputs)
                 
-                show_image_list = []
-                # First batch only
-                if frame and idx%10==0:
-                    show_image_list = generate_display_images(frame, model, real_images, outputs)
-                    
-                    if not show_pca:
-                        latent_vectors = None
-                    
-                    wx.CallAfter(
-                        frame.show_images, 
-                        show_image_list, 
-                        total_losses=total_losses,
-                        r_losses=r_losses,
-                        p_losses=p_losses,
-                        learning_rates=learning_rates,
-                        latent_vectors=latent_vectors
-                    )
+                if not show_pca:
+                    latent_vectors = None
+                
+                wx.CallAfter(
+                    frame.show_images, 
+                    show_image_list, 
+                    total_losses=total_losses,
+                    r_losses=r_losses,
+                    p_losses=p_losses,
+                    learning_rates=learning_rates,
+                    latent_vectors=latent_vectors
+                )
         
         if save_enabled:
             folder = "checkpoints"
             path = torch_utils.create_directory(folder)
 
-            model.save(path / f"vitae_checkpoint.epoch{epoch}.pth", optimizer)
+            if (epoch+1) % logging_interval == 0:
+                model.save(path / f"vitae_checkpoint.epoch{epoch+1}.pth", optimizer)
+            
             if lowest_loss is None:
                 lowest_loss = total_loss+1
             if total_loss < lowest_loss:
@@ -247,7 +248,6 @@ def test_data(frame, device):
     # set a large initial lr as it'll be adjusted by the scheduler
     learning_rate = .001
     num_epochs = 1000000
-    logging_interval = 1
 
     filepath = "checkpoints/saved/vae_checkpoint.20k-vitae.pth"
     model, optimizer = vitae.ViTAE.from_checkpoint(filepath, torch.optim.Adam, {'lr': 0.001})
