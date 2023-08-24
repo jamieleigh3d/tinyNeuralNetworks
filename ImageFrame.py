@@ -128,9 +128,8 @@ class ImageLossFrame(wx.Frame):
 
     def show_images(self, idx_images, total_losses=None, avg_losses=None, r_losses=None, learning_rates=None, p_losses=None, latent_vectors=None):
         
-        print("show_images 1")
         self.update_plot(total_losses, avg_losses, r_losses, learning_rates, p_losses)
-        print("show_images 2")
+        
         for (idx, img) in idx_images:
             width, height = (128,128)
             if img.width < width or img.height < height:
@@ -138,9 +137,8 @@ class ImageLossFrame(wx.Frame):
             bitmap = self.PIL_to_wxBitmap(img)
             if idx >= 0 and idx < len(self.image_boxes):
                 self.image_boxes[idx].SetBitmap(bitmap)
-        print("show_images 3")
+        
         if latent_vectors is not None:
             self.show_pca(latent_vectors)
-        print("show_images 4")
+        
         self.canvas.draw()
-        print("show_images 5")

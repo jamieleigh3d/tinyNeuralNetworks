@@ -7,7 +7,8 @@ import vit_pytorch
 from vit_pytorch.extractor import Extractor
 
 class ViTAEConfig():
-    def __init__(self, img_width=128, img_height=128, channels=3, emb_size=256, num_layers=4, num_heads=2, patch_count=8, mlp_dim=1024, dim_head = 64):
+    def __init__(self, img_width=128, img_height=128, channels=3, emb_size=256, 
+                num_layers=4, num_heads=2, patch_count=8, mlp_dim=1024, dim_head = 64):
         self.img_width = img_width
         self.img_height = img_height
         self.channels = channels

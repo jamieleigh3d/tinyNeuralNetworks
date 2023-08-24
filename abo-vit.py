@@ -30,8 +30,6 @@ import perceptual
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-
-
 # Training Loop
 def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_images, idx, scheduler=None):
     model.train()
@@ -39,8 +37,8 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     optimizer.zero_grad()
     
     tokenized_names = []
-    img_width = model.img_width
-    img_height = model.img_height
+    img_width = model.cfg.img_width
+    img_height = model.cfg.img_height
     
     latent_vectors = None
     
@@ -53,6 +51,8 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     latent_vectors = torch.mean(z, dim=1).view(batch_size,-1).detach().cpu()
 
     # Loss
+    
+    # TODO: add patch-by-patch hue loss
 
     recon_loss = F.binary_cross_entropy(outputs.view(batch_size,-1), real_images.view(batch_size,-1), reduction='mean')
     #recon_loss = F.mse_loss(outputs.view(batch_size,-1), real_images.view(batch_size,-1))
@@ -129,24 +129,22 @@ def train(frame, device):
     num_epochs = 1000000
     logging_interval = 1
 
-    img_size=128
-    channels=3
-    emb_size=256
-    num_layers=4
-    num_heads=2
-    patch_count=8
-    patch_size=img_size//patch_count
-    mlp_dim=emb_size*4
-    print(f"mlp_dim: {mlp_dim}")
-    model = vitae.ViTAE(
-        img_size = img_size, 
-        channels = channels, 
-        emb_size = emb_size,
-        num_layers = num_layers,
-        num_heads = num_heads,
-        patch_size = patch_size,
-        mlp_dim = mlp_dim
-    ).to(device)
+    img_width=128
+    img_height=128
+
+    cfg = vitae.ViTAEConfig(
+        img_width=img_width,
+        img_height=img_height,
+        channels=3,
+        emb_size=256,
+        num_layers=4,
+        num_heads=2,
+        patch_count=8,
+        mlp_dim=1024,
+        dim_head = 64,
+    )
+    
+    model = vitae.ViTAE(cfg).to(device)
     
     #print(model)
     #exit()
@@ -161,7 +159,7 @@ def train(frame, device):
     perceptual_loss = perceptual.PerceptualLoss().to(device)
 
     
-    obj_data = abo.load_objects(64)
+    obj_data = abo.load_objects(1024)
     image_metadata = abo.load_images()
     
     print(f"Num objects: {len(obj_data)}")
@@ -187,9 +185,11 @@ def train(frame, device):
         
         for idx, obj_batch in tqdm(enumerate(torch_utils.batches(obj_data, batch_size)), leave=False, total=num_batches, desc="Batch"):
             
-            real_images = abo_utils.preprocess_image_batch(obj_batch, image_metadata, img_size, img_size, device)
+            real_images = abo_utils.preprocess_image_batch(obj_batch, image_metadata, img_width, img_height, device)
             
             outputs,loss,r_term,p_term,lv = train_epoch(model, perceptual_loss, optimizer, epoch, frame, obj_batch, real_images, idx)
+            model.epoch = epoch
+            
             latent_vectors = lv
             total_loss = loss / len(obj_batch)
             r_loss = r_term / len(obj_batch)
@@ -229,12 +229,12 @@ def train(frame, device):
             folder = "checkpoints"
             path = torch_utils.create_directory(folder)
 
-            model.save(path / f"vae_checkpoint.epoch{epoch}.pth", optimizer, epoch)
+            model.save(path / f"vitae_checkpoint.epoch{epoch}.pth", optimizer)
             if lowest_loss is None:
                 lowest_loss = total_loss+1
             if total_loss < lowest_loss:
                 lowest_loss = total_loss
-                model.save(path / "vae_checkpoint.best.pth", optimizer, epoch)
+                model.save(path / "vitae_checkpoint.best.pth", optimizer)
 
 
 def test_data(frame, device):
@@ -396,8 +396,8 @@ if __name__ == "__main__":
         app = wx.App(False)
         frame = ImageLossFrame(None, 'Image Processing GUI')
         frame.Show()
-        #frame.thread = start_training_thread(frame, device)
-        frame.thread = start_testing_thread(frame, device)
+        frame.thread = start_training_thread(frame, device)
+        #frame.thread = start_testing_thread(frame, device)
         
         app.MainLoop()
     else:
