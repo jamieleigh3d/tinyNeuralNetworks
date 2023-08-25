@@ -229,6 +229,12 @@ if __name__ == "__main__":
         "Got milk?",
     ]
 
+    film_titles = [
+        "The Shawshank Redemption", "The Godfather", "The Dark Knight", "The Godfather Part II", "12 Angry Men", "Schindler's List", "The Lord of the Rings: The Return of the King", "Pulp Fiction", "The Lord of the Rings: The Fellowship of the Ring", "The Good, the Bad and the Ugly", "Forrest Gump", "Fight Club", "The Lord of the Rings: The Two Towers", "Inception", "Star Wars: Episode V - The Empire Strikes Back", "The Matrix", "Goodfellas", "Spider-Man: Across the Spider-Verse", "One Flew Over the Cuckoo's Nest", "Se7en", "It's a Wonderful Life", "Seven Samurai", "The Silence of the Lambs", "Interstellar", "Saving Private Ryan", "City of God", "Life Is Beautiful", "The Green Mile", "Star Wars: Episode IV - A New Hope", "Terminator 2: Judgment Day", "Back to the Future", "Spirited Away", "The Pianist", "Psycho", "Parasite", "Oppenheimer", "Gladiator", "The Lion King", "Léon: The Professional", "American History X", "The Departed", "Whiplash", "The Prestige", "The Usual Suspects", "Grave of the Fireflies", "Casablanca", "Harakiri", "The Intouchables", "Modern Times", "Cinema Paradiso", "Once Upon a Time in the West", "Rear Window", "Alien", "City Lights", "Apocalypse Now", "Memento", "Django Unchained", "Indiana Jones and the Raiders of the Lost Ark", "WALL·E", "The Lives of Others", "Sunset Blvd.", "Paths of Glory", "Avengers: Infinity War", "The Shining", "The Great Dictator", "Witness for the Prosecution", "Spider-Man: Into the Spider-Verse", "Aliens", "American Beauty", "The Dark Knight Rises", "Inglourious Basterds", "Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb", "Oldboy", "Coco", "Amadeus", "Toy Story", "Braveheart", "Das Boot", "Joker", "Avengers: Endgame", "Princess Mononoke", "Good Will Hunting", "Once Upon a Time in America", "Your Name.", "3 Idiots", "High and Low", "Singin' in the Rain", "Requiem for a Dream", "Capernaum", "Toy Story 3", "Come and See", "Star Wars: Episode VI - Return of the Jedi", "Eternal Sunshine of the Spotless Mind", "2001: A Space Odyssey", "The Hunt", "Reservoir Dogs", "Ikiru", "Lawrence of Arabia", "Citizen Kane", "M", "North by Northwest", "The Apartment", "Vertigo", "Double Indemnity", "Amélie", "Scarface", "Full Metal Jacket", "A Clockwork Orange", "Incendies", "Hamilton", "Heat", "Up", "To Kill a Mockingbird", "The Sting", "A Separation", "Indiana Jones and the Last Crusade", "Metropolis", "Die Hard", "L.A. Confidential", "Bicycle Thieves", "Snatch", "Like Stars on Earth", "Taxi Driver", "1917", "Downfall", "Dangal", "Top Gun: Maverick", "For a Few Dollars More", "Batman Begins", "Some Like It Hot", "The Kid", "The Wolf of Wall Street", "The Father", "Green Book", "All About Eve", "Judgment at Nuremberg", "The Truman Show", "Ran", "There Will Be Blood", "Casino", "Shutter Island", "Pan's Labyrinth", "Unforgiven", "The Sixth Sense", "Jurassic Park", "A Beautiful Mind", "The Treasure of the Sierra Madre", "Yojimbo", "No Country for Old Men", "Monty Python and the Holy Grail", "Kill Bill: Vol. 1", "The Great Escape", "The Thing", "Rashomon", "Finding Nemo", "The Elephant Man", "Chinatown", "Spider-Man: No Way Home", "V for Vendetta", "Gone with the Wind", "Raging Bull", "Dial M for Murder", "Howl's Moving Castle", "Lock, Stock and Two Smoking Barrels", "The Secret in Their Eyes", "Inside Out", "Prisoners", "Three Billboards Outside Ebbing, Missouri", "The Bridge on the River Kwai", "Trainspotting", "Fargo", "Warrior", "Gran Torino", "Catch Me If You Can", "My Neighbor Totoro", "Million Dollar Baby", "Klaus", "Children of Heaven", "Harry Potter and the Deathly Hallows: Part 2", "Blade Runner", "12 Years a Slave", "Before Sunrise", "The Gold Rush", "The Grand Budapest Hotel", "Ben-Hur", "Gone Girl", "On the Waterfront", "Barry Lyndon", "Hacksaw Ridge", "In the Name of the Father", "The General", "The Deer Hunter", "Wild Strawberries", "Memories of Murder", "The Third Man", "The Wages of Fear", "Wild Tales", "Sherlock Jr.", "Mad Max: Fury Road", "Dead Poets Society", "Mr. Smith Goes to Washington", "Monsters, Inc.", "How to Train Your Dragon", "Mary and Max", "Jaws", "The Seventh Seal", "Room", "The Big Lebowski", "Ford v Ferrari", "Tokyo Story", "Ratatouille", "Hotel Rwanda", "The Passion of Joan of Arc", "Rocky", "Logan", "Platoon", "Spotlight", "The Terminator", "Jai Bhim", "Before Sunset", "Rush", "Network", "Stand by Me", "The Best Years of Our Lives", "The Wizard of Oz", "Into the Wild", "La haine", "The Exorcist", "Pirates of the Caribbean: The Curse of the Black Pearl", "The Incredibles", "To Be or Not to Be", "My Father and My Son", "Groundhog Day", "The Grapes of Wrath", "Hachi: A Dog's Tale", "The Battle of Algiers", "The Handmaiden", "Amores Perros", "Rebecca", "Cool Hand Luke", "Pather Panchali", "The Sound of Music", "It Happened One Night", "The Iron Giant", "The 400 Blows", "The Help", "Persona", "Life of Brian", "Aladdin", "Drishyam",
+    ]
+
+
+    
     #input_texts = [
     #    "See spot run. Run spot run!"
     #]
@@ -238,8 +244,10 @@ if __name__ == "__main__":
     #input_texts = [ "Go buy milk?" ]
     #input_texts = [ "Dog" ]
     
-    obj_data = abo.load_objects(10)
-    input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
+    #obj_data = abo.load_objects(10)
+    #input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
+    
+    input_texts = film_titles
     
     #[print(t) for t in input_texts]
     
@@ -250,14 +258,14 @@ if __name__ == "__main__":
     tokenizer = T.BPETokenizer()
     sequencer = dataset_utils.TextDatasetSequencer(tokenizer)
     
-    MAX_SEQ_LEN = 128
+    MAX_SEQ_LEN = 16
     
     input_sequences, target_sequences = sequencer.load(
         input_texts, 
         seq_len=MAX_SEQ_LEN,
     )
     
-    show_inputs = False
+    show_inputs = True
     if show_inputs:
         for idx, (tokens, next_token) in enumerate(zip(input_sequences, target_sequences)):
             str = tokenizer.indices_to_text(tokens,hide_pad=False)
@@ -269,7 +277,7 @@ if __name__ == "__main__":
     #exit()
     
     # Hyperparameters
-    BATCH_SIZE = 32
+    BATCH_SIZE = 128
     NUM_TOKENS = tokenizer.vocab_size()
     epochs = 100
     embed_dim = 128
@@ -277,9 +285,9 @@ if __name__ == "__main__":
     num_layers = 8
     dropout = 0.1
     
-    do_training = True
-    load_checkpoint = False
-    checkpoint_path = "tinygpt_checkpoint.epoch23.bpe.20k-titles.emb128.h8.l8.pth"
+    do_training = False
+    load_checkpoint = True
+    checkpoint_path = "checkpoints/saved/tinygpt_checkpoint.best.top250filmtitles.pth"
     #checkpoint_path = "tinygpt_checkpoint.char.500titles.e64.h8.l8.len64.pth"
     # BATCH_SIZE = 256
     # NUM_TOKENS = tokenizer.vocab_size()
@@ -341,7 +349,7 @@ if __name__ == "__main__":
             x = torch.tensor(tokens).unsqueeze(0).to(device)
             
             max_new_tokens = 200
-            temperature = 0.007
+            temperature = 1.0
             top_k = 5
             outputs = model.generate(
                 x, 
