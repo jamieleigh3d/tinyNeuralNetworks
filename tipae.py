@@ -345,7 +345,7 @@ class TIPAE(nn.Module):
 
         return model, optimizer
 
-def prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height, block_size, device):
+def prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height, block_size):
     
     obj_data = abo.load_objects(num_objects)
     image_metadata = abo.load_images()
@@ -354,7 +354,7 @@ def prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height
     print(f"Num images: {len(image_metadata)}")
     print(f"Batch size: {BATCH_SIZE}")
     
-    img_x_tensor = abo_utils.preprocess_image_batch(obj_data, image_metadata, img_width, img_height, device)
+    img_x_tensor = abo_utils.preprocess_image_batch(obj_data, image_metadata, img_width, img_height)
     
     names_x = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
@@ -380,11 +380,11 @@ def prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height
     
     recon_x = tokenizer.indices_to_texts(tokens_x, hide_pad=True)
     
-    [print(f"{x}\n") for x in recon_x]
+    #[print(f"{x}\n") for x in recon_x]
     
     # Prepare data for DataLoader
     
-    tokens_x_tensor = torch.tensor(tokens_x).to(device)
+    tokens_x_tensor = torch.tensor(tokens_x)
     tensor_dataset = TensorDataset(img_x_tensor, tokens_x_tensor)
     dataloader = DataLoader(tensor_dataset, batch_size=BATCH_SIZE, shuffle=False)
     
@@ -476,25 +476,25 @@ def smooth_text_loss(tokens_logits_out, tokens_x, NUM_TOKENS, smoothing=0.1):
 def train(frame, device):
 
     BATCH_SIZE = 64
-    save_enabled = True
+    save_enabled = False
     show_pca = True
-    num_objects = 12
+    num_objects = 12 #102400
     
-    do_training = True
-    load_checkpoint = False
-    checkpoint_filepath = "checkpoints/saved/tipae_checkpoint.best.multimodal.utf8.pth"
+    do_training = False
+    load_checkpoint = True
+    checkpoint_filepath = "checkpoints/saved/tipae_checkpoint.best.20k.epoch1591.pth"
     
-    img_width = 64
+    img_width = 128
     img_height = img_width
     block_size = 128
     
     tokenizer = tokenization.UTF8Tokenizer()
     
-    dataloader = prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height, block_size, device)
+    dataloader = prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height, block_size)
     
     # Hyperparameters
     # set a large initial lr as it'll be adjusted by the scheduler
-    learning_rate = 0.0005 #1 #0.001
+    learning_rate = 0.1 #0.001
     num_epochs = 1000000
     logging_interval = 100
     warmup_steps = 4000
@@ -517,7 +517,7 @@ def train(frame, device):
             num_heads = 4,
             patch_count = 8,
             mlp_dim = emb_size*4,
-            dim_head = 64,
+            dim_head = 128,
             
             text_emb_size = emb_size,
             vocab_size = NUM_TOKENS,
@@ -533,7 +533,7 @@ def train(frame, device):
         # Loss and Optimizer
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = None
-    #scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=1000)
+    scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=4000)
     
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
@@ -562,6 +562,8 @@ def train(frame, device):
                 optimizer.zero_grad()
             else:
                 model.eval()
+            img_x = img_x.to(device)
+            tokens_x = tokens_x.to(device)
                 
             batch_size = img_x.shape[0]
 
@@ -579,7 +581,7 @@ def train(frame, device):
             warmup_factor = min(1.0, total_steps / warmup_steps)
             total_steps += 1
             
-            alpha = 1.0
+            alpha = 1000.0
             text_term = text_loss * alpha
 
             beta = 1.0
@@ -603,7 +605,7 @@ def train(frame, device):
                 total_loss.backward()
                 
                 clip_value = 5.0
-                clip_grad_value_(model.parameters(), clip_value)
+                clip_grad_norm_(model.parameters(), clip_value)
 
                 optimizer.step()
                 if scheduler:
@@ -629,7 +631,7 @@ def train(frame, device):
                 return
                     
             with torch.no_grad():
-                if frame and epoch%10==0 and batch_idx%10==0:
+                if frame and batch_idx%10==0: #and epoch%10==0:
                     # Output if text loss has not converged
                     tokens_recon = model.to_tokens(tokens_logits_out)
                     tokens_list = tokens_x.cpu().tolist()
