@@ -91,11 +91,12 @@ class TIPAE(nn.Module):
             dim_head = self.cfg.dim_head, 
             mlp_dim = self.cfg.mlp_dim)
 
-        self.image_projection = nn.Linear(emb_size * self.cfg.patch_count ** 2, combined_latent_size)
+        self.image_projection_mean = nn.Linear(emb_size, combined_latent_size)
+        self.image_projection_log_var = nn.Linear(emb_size, combined_latent_size)
         
         # Image decoder
 
-        self.image_unprojection = nn.Linear(combined_latent_size, emb_size * self.cfg.patch_count ** 2)
+        self.image_unprojection = nn.Linear(combined_latent_size, emb_size)
         
         self.img_decoder = vit_pytorch.simple_vit.Transformer(
             dim = emb_size, 
@@ -130,10 +131,11 @@ class TIPAE(nn.Module):
             dim_head = self.cfg.dim_head, 
             mlp_dim = self.cfg.mlp_dim)
             
-        self.text_projection = nn.Linear(self.cfg.block_size * text_emb_size, combined_latent_size)
+        self.text_projection_mean = nn.Linear(text_emb_size, combined_latent_size)
+        self.text_projection_log_var = nn.Linear(text_emb_size, combined_latent_size)
     
         # Text decoder
-        self.text_unprojection = nn.Linear(combined_latent_size, self.cfg.block_size * text_emb_size)
+        self.text_unprojection = nn.Linear(combined_latent_size, text_emb_size)
 
         self.text_decoder = vit_pytorch.simple_vit.Transformer(
             dim = text_emb_size, 
@@ -162,7 +164,11 @@ class TIPAE(nn.Module):
 
     def total_params(self):
         return sum(p.numel() for p in self.parameters())
-
+    
+    def reparameterize(self, mean, log_var):
+        std = torch.exp(0.5 * log_var)
+        eps = torch.randn_like(std)
+        return mean + eps * std
     
     def forward(self, img, tokens):
     
@@ -170,19 +176,18 @@ class TIPAE(nn.Module):
         assert self.cfg.channels == img.shape[1], 'Image channels (shape[1]) must match ViTAE channels.'
         assert self.cfg.img_height == img.shape[2] and self.cfg.img_width == img.shape[3], 'Image dimensions (shape[2] and shape[3]) must match ViTAE dimensions.'
         
-        img_z, img_z_mean = self.img_encode(img)
+        img_z_mean, img_z_log_var = self.img_encode(img)
                 
-        text_z, text_z_mean = self.text_encode(tokens)
+        text_z_mean, text_z_log_var = self.text_encode(tokens)
         
-        # Concatenate the image and text latent spaces
-        #combined_z = torch.cat([img_z_mean, text_z_mean], dim=1)
-        #combined_z = img_z_mean + text_z_mean
+        img_z_sampled = self.reparameterize(img_z_mean, img_z_log_var)
+        text_z_sampled = self.reparameterize(text_z_mean, text_z_log_var)
         
-        img_x = self.img_decode(img_z_mean)
+        img_x = self.img_decode(img_z_sampled)
         
-        text_x = self.text_decode(text_z_mean)
+        text_x = self.text_decode(text_z_sampled)
         
-        return img_x, text_x, img_z_mean, text_z_mean
+        return img_x, text_x, img_z_mean, img_z_log_var, text_z_mean, text_z_log_var
 
     def text_encode(self, tokens):
         emb = self.text_embedding(tokens)
@@ -194,20 +199,28 @@ class TIPAE(nn.Module):
         
         z = self.text_encoder(emb)
         
-        # Projection
-        z_projected = self.text_projection(z.view(batch_size, -1))
+        #z_pool = z.mean(dim=1)
+        z_pool, _ = z.max(dim=1)
         
-        return z, z_projected
+        # Projection
+        z_mean = self.text_projection_mean(z_pool.view(batch_size, -1))
+        z_log_var = self.text_projection_log_var(z_pool.view(batch_size, -1))
+        
+        return z_mean, z_log_var
         
     def text_decode(self, combined_z):
         batch_size = combined_z.shape[0]
         
         # Unprojection
-        z_unprojected = self.text_unprojection(combined_z).view(batch_size, -1, self.cfg.text_emb_size)
+        z_unprojected = self.text_unprojection(combined_z)
         
-        emb = self.text_decoder(z_unprojected)
+        seq_len = self.cfg.block_size
+        z_tiled = z_unprojected.unsqueeze(1).expand(-1, seq_len, -1).view(batch_size, -1, self.cfg.text_emb_size)
+        
+        emb = self.text_decoder(z_tiled)
         
         x = self.text_fc(emb)
+        x = torch.sigmoid(x)
         
         return x
         
@@ -222,23 +235,30 @@ class TIPAE(nn.Module):
         batch_size = img.shape[0]
         
         x = self.to_patch_embedding(img)
+        
         x += self.img_pos_embedding.to(device, dtype=x.dtype)
         
         z = self.img_encoder(x)
-        
+
+        #z_pool = z.mean(dim=1)
+        z_pool, _ = z.max(dim=1)
+
         # Projection
-        z_projected = self.image_projection(z.view(batch_size, -1))
+        z_mean = self.image_projection_mean(z_pool.view(batch_size, -1))
+        z_log_var = self.image_projection_log_var(z_pool.view(batch_size, -1))
         
-        return z, z_projected
+        return z_mean, z_log_var
         
     def img_decode(self, combined_z):
         
         batch_size = combined_z.shape[0]
 
-        seq_len = self.cfg.patch_count**2
-        z_unprojected = self.image_unprojection(combined_z).view(batch_size, seq_len, -1)
+        z_unprojected = self.image_unprojection(combined_z)
 
-        x = self.img_decoder(z_unprojected)
+        seq_len = self.cfg.patch_count**2
+        z_tiled = z_unprojected.unsqueeze(1).expand(-1, seq_len, -1).view(batch_size, seq_len, -1)
+        
+        x = self.img_decoder(z_tiled)
         
         img = self.from_patch_embedding(x)
         
@@ -381,21 +401,22 @@ def generate_display_images(frame, model, real_images, outputs, tokenizer):
             show_image_list.append((idx+frame.cols,pil_image))
         
         # for idx in range(frame.cols):
-            # _,z1 = model.img_encode(real_images[idx].unsqueeze(0))
+            # z1,_ = model.img_encode(real_images[idx].unsqueeze(0))
             # token_logits_out = model.text_decode(z1)
             # tokens_recon = model.to_tokens(token_logits_out)
             # recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
             
-            # _,z2 = model.text_encode(tokens_recon)
+            # z2,_ = model.text_encode(tokens_recon)
             # img_out = model.img_decode(z2)
             
             # pil_image = torch_utils.tensor_to_image(img_out[0].detach().cpu())
             # show_image_list.append((idx+2*frame.cols,pil_image))
             
-            # print(f"{idx} ======> {recon_out}")
+            # if idx==0:
+                # print(f"{idx} ======> {recon_out}")
         
-        _,z1 = model.img_encode(real_images[0].unsqueeze(0))
-        _,z2 = model.img_encode(real_images[4].unsqueeze(0))
+        z1,_ = model.img_encode(real_images[0].unsqueeze(0))
+        z2,_ = model.img_encode(real_images[4].unsqueeze(0))
         
         num_lerps = frame.cols
         for i in range(num_lerps):
@@ -405,44 +426,47 @@ def generate_display_images(frame, model, real_images, outputs, tokenizer):
             
             out = model.img_decode(latent_lerp)[0]
             
-            token_logits_out = model.text_decode(latent_lerp)
-            tokens_recon = model.to_tokens(token_logits_out)
-            recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
-            
-            print(f"{alpha:.2f} => '{recon_out}'")
             pil_image = torch_utils.tensor_to_image(out.detach().cpu())
             show_image_list.append((i+frame.cols*2,pil_image))
+            
+            # token_logits_out = model.text_decode(latent_lerp)
+            # tokens_recon = model.to_tokens(token_logits_out)
+            # recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
+            
+            # print(f"{alpha:.2f} => '{recon_out}'")
     
     return show_image_list
 
+def kl_divergence(mean, log_var):
+    return -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
+    
 def train(frame, device):
 
     BATCH_SIZE = 64
     save_enabled = True
     show_pca = True
-    num_objects = 12
+    num_objects = 128
     
     do_training = True
     load_checkpoint = False
-    checkpoint_filepath = "checkpoints/saved/tipae_checkpoint.best.multimodal.pth"
+    checkpoint_filepath = "checkpoints/saved/tipae_checkpoint.best.multimodal.utf8.pth"
     
     img_width = 128
     img_height = img_width
     block_size = 256
     
-    # TODO: Move tokenizer into model
-    # TODO: Save/load tokenizer vocab with model
-    # TODO: Load returns a tokenizer
-    tokenizer = tokenization.BPETokenizer()
+    tokenizer = tokenization.UTF8Tokenizer()
     
     dataloader = prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height, block_size, device)
     
     # Hyperparameters
     # set a large initial lr as it'll be adjusted by the scheduler
-    learning_rate = 1
+    learning_rate = 0.001 #10
     num_epochs = 1000000
-    logging_interval = 50
+    logging_interval = 100
+    warmup_steps = 4000
     NUM_TOKENS = tokenizer.vocab_size()
+    print(f"NUM_TOKENS: {NUM_TOKENS}")
     
     if load_checkpoint:
         model, optimizer = TIPAE.from_checkpoint(checkpoint_filepath, torch.optim.Adam, {'lr': learning_rate})
@@ -461,21 +485,21 @@ def train(frame, device):
             mlp_dim = 256*4,
             dim_head = 64,
             
-            text_emb_size = 64,
+            text_emb_size = 256,
             vocab_size = NUM_TOKENS,
             block_size = block_size,
-            dropout = 0.3,
+            dropout = 0.0,
             
-            image_latent_size = 256,
-            text_latent_size = 256
+            image_latent_size = 128,
+            text_latent_size = 128
         )
         
         model = TIPAE(cfg).to(device)
         
         # Loss and Optimizer
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    
-    scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=4000)
+    scheduler = None
+    #scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=4000)
     
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
@@ -485,14 +509,17 @@ def train(frame, device):
     learning_rates = []
     
     lowest_loss = None
+    total_steps = 0
     
-    #last_epoch = model.load("vae_checkpoint.pth", optimizer)
+    epoch_start_time = time.perf_counter()
     
     for epoch in range(num_epochs): #, desc="Training", leave=False):
         epoch_loss = 0
         epoch_img_loss = 0
         epoch_text_loss = 0
         epoch_alignment_loss = 0
+        epoch_img_kl_loss = 0
+        epoch_text_kl_loss = 0
         
 #        for batch_idx, (img_x, tokens_x) in enumerate(tqdm(dataloader, leave=False, desc="Batch")):
         for batch_idx, (img_x, tokens_x) in enumerate(dataloader):
@@ -503,13 +530,23 @@ def train(frame, device):
                 model.eval()
                 
             batch_size = img_x.shape[0]
+
+            fwd_start_time = time.perf_counter()
+            img_out, tokens_logits_out, img_z_mean, img_z_log_var, text_z_mean, text_z_log_var = model(img_x, tokens_x)
+            fwd_end_time = time.perf_counter()
             
-            img_out, tokens_logits_out, img_z_mean, text_z_mean = model(img_x, tokens_x)
+            #print(f"fwd pass in {(fwd_end_time - fwd_start_time)*1000:.3f} ms")
 
             text_loss = F.cross_entropy(tokens_logits_out.view(-1, NUM_TOKENS), tokens_x.view(-1))
             img_loss = F.binary_cross_entropy(img_out.view(batch_size,-1), img_x.view(batch_size,-1), reduction='mean')
             
             alignment_loss = F.mse_loss(img_z_mean, text_z_mean)
+            
+            img_kl_loss = kl_divergence(img_z_mean, img_z_log_var)
+            text_kl_loss = kl_divergence(text_z_mean, text_z_log_var)
+            
+            warmup_factor = min(1.0, total_steps / warmup_steps)
+            total_steps += 1
             
             alpha = 1.0
             text_term = text_loss * alpha
@@ -517,25 +554,43 @@ def train(frame, device):
             beta = 1.0
             img_term = img_loss * beta
             
-            gamma = 1.0
+            gamma = 0.0
             alignment_term = alignment_loss * gamma
             
-            total_loss = text_term + img_term + alignment_loss
+            delta = 0.0 * warmup_factor
+            img_kl_term = img_kl_loss * delta
+            
+            echo = 0.0 * warmup_factor
+            text_kl_term = text_kl_loss * echo
+            
+            
+            total_loss = text_term + img_term + alignment_term + img_kl_term + text_kl_term
             
             if do_training:
+                back_start_time = time.perf_counter()
+                
+                #print(f"loss pass in {(back_start_time - fwd_end_time)*1000:.3f} ms")
+
                 total_loss.backward()
                 optimizer.step()
-                scheduler.step()
+                if scheduler:
+                    scheduler.step()
+                back_end_time = time.perf_counter()
+            
+                #print(f"backward pass in {(back_end_time - back_start_time)*1000:.3f} ms")
+
                 
             epoch_loss += total_loss.item()
             epoch_text_loss += text_term.item()
             epoch_img_loss += img_term.item()
             epoch_alignment_loss += alignment_term.item()
+            epoch_img_kl_loss += img_kl_term.item()
+            epoch_text_kl_loss += text_kl_term.item()
             model.epoch = epoch
             
             total_losses.append(total_loss.item())
-            img_losses.append(text_term.item())
-            text_losses.append(img_term.item())
+            img_losses.append(img_term.item())
+            text_losses.append(text_term.item())
             
             learning_rate = optimizer.param_groups[0]["lr"]
             learning_rates.append(learning_rate)
@@ -544,19 +599,19 @@ def train(frame, device):
                 return
                     
             with torch.no_grad():
-
-                # Output if text loss has not converged
-                if text_term.item() > 0.01:
+                if frame and epoch%10==0 and batch_idx%10==0:
+                    start_time = time.perf_counter()
+                
+                    # Output if text loss has not converged
                     tokens_recon = model.to_tokens(tokens_logits_out)
                     
                     recon_x = tokenizer.indices_to_text(tokens_x.cpu().tolist()[0], hide_pad=True)
                     recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
         
                     print(f"{recon_x}\n=>\n{recon_out}")
-    
-                if frame and batch_idx%10==0:
+        
                     show_image_list = generate_display_images(frame, model, img_x, img_out, tokenizer)
-                    
+
                     wx.CallAfter(
                         frame.show_images, 
                         show_image_list, 
@@ -565,14 +620,23 @@ def train(frame, device):
                         p_losses=text_losses,
                         learning_rates=learning_rates
                     )
+                    end_time = time.perf_counter()
+            
+                    #print(f"gen display pass in {(end_time - start_time)*1000:.3f} ms")
         
+        epoch_end_time = time.perf_counter()
+        ms = (epoch_end_time-epoch_start_time)*1000
+        epoch_start_time = epoch_end_time
         
-        print(f"Epoch {epoch+1}/{num_epochs} LR: {learning_rate:.6f} Loss: {epoch_loss:.6f} Text: {epoch_text_loss:.6f} Img: {epoch_img_loss:.6f} Align: {epoch_alignment_loss:.6f}")
+        print(f"Epoch {epoch+1}/{num_epochs} {ms:.3f} ms LR: {learning_rate:.6f} Loss: {epoch_loss:.6f} Text: {epoch_text_loss:.6f} Img: {epoch_img_loss:.6f} Align: {epoch_alignment_loss:.6f} Img KL: {epoch_img_kl_loss:.6f} Text KL: {epoch_text_kl_loss:.6f}")
         
-        if not do_training and save_enabled:
+        if do_training and save_enabled:
             folder = "checkpoints"
             path = torch_utils.create_directory(folder)
-
+            
+            if (epoch+1) % 10 == 0:
+                model.save(path / f"tipae_checkpoint.latest.pth", optimizer)
+            
             if (epoch+1) % logging_interval == 0:
                 model.save(path / f"tipae_checkpoint.epoch{epoch+1}.pth", optimizer)
             
@@ -618,7 +682,7 @@ if __name__ == "__main__":
     
     sys.stdout.reconfigure(encoding='utf-8')
     
-    device_string = 'cpu'#'cuda' if torch.cuda.is_available() else 'cpu'
+    device_string = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using {device_string}")
     device = torch.device(device_string)
     
