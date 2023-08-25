@@ -390,7 +390,7 @@ def prepare_dataloader(BATCH_SIZE, num_objects, tokenizer, img_width, img_height
     
     return dataloader
 
-def generate_display_images(frame, model, real_images, outputs, tokenizer):
+def generate_display_images(frame, model, real_images, img_z_mean, tokenizer):
     show_image_list = []
     
     with torch.no_grad():
@@ -398,7 +398,8 @@ def generate_display_images(frame, model, real_images, outputs, tokenizer):
         for idx, img in enumerate(real_images[:frame.cols]):
             pil_image = torch_utils.tensor_to_image(img.detach().cpu())
             show_image_list.append((idx, pil_image))
-    
+        
+        outputs = model.img_decode(img_z_mean)
         for idx, out in enumerate(outputs[:frame.cols]):
             pil_image = torch_utils.tensor_to_image(out.detach().cpu())
             show_image_list.append((idx+frame.cols,pil_image))
@@ -633,6 +634,7 @@ def train(frame, device):
             with torch.no_grad():
                 if frame and batch_idx%10==0: #and epoch%10==0:
                     # Output if text loss has not converged
+                    tokens_logits_out = model.text_decode(text_z_mean)
                     tokens_recon = model.to_tokens(tokens_logits_out)
                     tokens_list = tokens_x.cpu().tolist()
                     recon_list = tokens_recon.cpu().tolist()
@@ -643,7 +645,7 @@ def train(frame, device):
                         recon_out = tokenizer.indices_to_text(recon_list[idx], hide_pad=True)
                         label_pairs.append((idx, f"{recon_out}"))
                     
-                    show_image_list = generate_display_images(frame, model, img_x, img_out, tokenizer)
+                    show_image_list = generate_display_images(frame, model, img_x, img_z_mean, tokenizer)
 
                     wx.CallAfter(
                         frame.show_images, 
