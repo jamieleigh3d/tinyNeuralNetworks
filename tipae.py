@@ -565,13 +565,8 @@ def train(frame, device):
                 
             batch_size = img_x.shape[0]
 
-            fwd_start_time = time.perf_counter()
             img_out, tokens_logits_out, img_z_mean, img_z_log_var, text_z_mean, text_z_log_var = model(img_x, tokens_x)
-            fwd_end_time = time.perf_counter()
             
-            #print(f"fwd pass in {(fwd_end_time - fwd_start_time)*1000:.3f} ms")
-
-            #text_loss = F.cross_entropy(tokens_logits_out.view(-1, NUM_TOKENS), tokens_x.view(-1))
             text_loss = smooth_text_loss(tokens_logits_out, tokens_x, NUM_TOKENS, smoothing=0.1)
             
             img_loss = F.binary_cross_entropy(img_out.view(batch_size,-1), img_x.view(batch_size,-1), reduction='sum')
@@ -603,10 +598,7 @@ def train(frame, device):
             total_loss = text_term + img_term + alignment_term + img_kl_term + text_kl_term
             
             if do_training:
-                back_start_time = time.perf_counter()
-                
-                #print(f"loss pass in {(back_start_time - fwd_end_time)*1000:.3f} ms")
-
+            
                 #with torch.autograd.detect_anomaly():
                 total_loss.backward()
                 
@@ -616,10 +608,7 @@ def train(frame, device):
                 optimizer.step()
                 if scheduler:
                     scheduler.step()
-                back_end_time = time.perf_counter()
             
-                #print(f"backward pass in {(back_end_time - back_start_time)*1000:.3f} ms")
-
                 
             epoch_loss += total_loss.item()
             epoch_text_loss += text_term.item()
@@ -641,30 +630,29 @@ def train(frame, device):
                     
             with torch.no_grad():
                 if frame and epoch%10==0 and batch_idx%10==0:
-                    start_time = time.perf_counter()
-                
                     # Output if text loss has not converged
                     tokens_recon = model.to_tokens(tokens_logits_out)
+                    tokens_list = tokens_x.cpu().tolist()
+                    recon_list = tokens_recon.cpu().tolist()
                     
-                    recon_x = tokenizer.indices_to_text(tokens_x.cpu().tolist()[0], hide_pad=True)
-                    recon_out = tokenizer.indices_to_text(tokens_recon.cpu().tolist()[0], hide_pad=True)
-        
-                    print(f"{recon_x}\n=>\n{recon_out}")
-        
+                    label_pairs = []
+                    for idx in range(frame.cols):
+                        recon_x = tokenizer.indices_to_text(tokens_list[idx], hide_pad=True)
+                        recon_out = tokenizer.indices_to_text(recon_list[idx], hide_pad=True)
+                        label_pairs.append((idx, f"{recon_out}"))
+                    
                     show_image_list = generate_display_images(frame, model, img_x, img_out, tokenizer)
 
                     wx.CallAfter(
                         frame.show_images, 
                         show_image_list, 
+                        label_pairs=label_pairs,
                         total_losses=total_losses,
                         r_losses=img_losses,
                         p_losses=text_losses,
-                        learning_rates=learning_rates
+                        learning_rates=learning_rates,
                     )
-                    end_time = time.perf_counter()
             
-                    #print(f"gen display pass in {(end_time - start_time)*1000:.3f} ms")
-        
         epoch_end_time = time.perf_counter()
         ms = (epoch_end_time-epoch_start_time)*1000
         epoch_start_time = epoch_end_time

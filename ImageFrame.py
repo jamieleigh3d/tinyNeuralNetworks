@@ -17,7 +17,7 @@ class ImageLossFrame(wx.Frame):
         for ax in self.axes:
             ax.axis('off')
             
-        self.rows = 3
+        self.rows = 4
         self.cols = 12
         # Using a FlexGridSizer for the image grid
         self.grid = wx.FlexGridSizer(self.rows, self.cols, 10, 10)
@@ -27,9 +27,15 @@ class ImageLossFrame(wx.Frame):
             self.grid.AddGrowableRow(i, 1)
         
         # Create image placeholders
-        self.image_boxes = [wx.StaticBitmap(self) for _ in range(self.rows*self.cols)]  
+        self.image_boxes = [wx.StaticBitmap(self) for _ in range((self.rows-1)*self.cols)]  
         for box in self.image_boxes:
             self.grid.Add(box, flag=wx.EXPAND)
+            
+        self.labels = [wx.StaticText(self, label="") for _ in range(self.cols)]
+        self.label_width = 150
+        for label in self.labels:
+            label.Wrap(self.label_width)
+            self.grid.Add(label, flag=wx.EXPAND)
         
         self.vbox = wx.BoxSizer(wx.VERTICAL)
         self.vbox.Add(self.grid, proportion=1, flag=wx.ALL | wx.EXPAND, border=10)
@@ -46,6 +52,8 @@ class ImageLossFrame(wx.Frame):
         self.thread = None
         
         self.Bind(wx.EVT_CLOSE, self.OnClose)
+        # Bind the resize event
+        self.Bind(wx.EVT_SIZE, self.OnResize)
         
     def OnClose(self, event):
         # Do cleanup here, stop threads, release resources
@@ -55,7 +63,25 @@ class ImageLossFrame(wx.Frame):
         if self.thread is not None:
             self.thread.join()
             self.thread = None
+ 
+    def OnResize(self, event):
+        # Get the new width of the window
+        new_width = self.GetSize().width
 
+        # For demonstration, let's say you want to wrap the labels at half the window width
+        # Adjust this calculation as necessary
+        padding = 5
+        self.label_width = (new_width-padding) / self.cols
+        
+        for label in self.labels:
+            label.Wrap(self.label_width)
+
+        # Make sure the layout and display are updated
+        self.Layout()
+
+        # Continue processing the event
+        event.Skip()
+        
     def create_plot(self):
         figure = Figure()
         plot = figure.add_subplot(111)
@@ -126,9 +152,17 @@ class ImageLossFrame(wx.Frame):
         ax.set+title('t-SNE visualization of latent space')
         
 
-    def show_images(self, idx_images, total_losses=None, avg_losses=None, r_losses=None, learning_rates=None, p_losses=None, latent_vectors=None):
+    def show_images(self, idx_images, label_pairs=None, total_losses=None, avg_losses=None, r_losses=None, learning_rates=None, p_losses=None, latent_vectors=None):
         
         self.update_plot(total_losses, avg_losses, r_losses, learning_rates, p_losses)
+        
+        if label_pairs is not None:
+            for (idx, text) in label_pairs:
+                self.labels[idx].SetLabel(text)
+                self.labels[idx].Wrap(self.label_width)
+
+            # Make sure the layout and display are updated
+            #self.Layout()
         
         for (idx, img) in idx_images:
             width, height = (128,128)
