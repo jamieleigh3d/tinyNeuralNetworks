@@ -4,6 +4,7 @@ import threading
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_, clip_grad_value_
 from torch.utils.data import DataLoader, TensorDataset
 from einops import rearrange
 from einops.layers.torch import Rearrange
@@ -91,12 +92,13 @@ class TIPAE(nn.Module):
             dim_head = self.cfg.dim_head, 
             mlp_dim = self.cfg.mlp_dim)
 
-        self.image_projection_mean = nn.Linear(emb_size, combined_latent_size)
-        self.image_projection_log_var = nn.Linear(emb_size, combined_latent_size)
+        seq_len = self.cfg.patch_count**2
+        self.image_projection_mean = nn.Linear(emb_size*seq_len, combined_latent_size)
+        self.image_projection_log_var = nn.Linear(emb_size*seq_len, combined_latent_size)
         
         # Image decoder
 
-        self.image_unprojection = nn.Linear(combined_latent_size, emb_size)
+        self.image_unprojection = nn.Linear(combined_latent_size, emb_size*seq_len)
         
         self.img_decoder = vit_pytorch.simple_vit.Transformer(
             dim = emb_size, 
@@ -131,11 +133,12 @@ class TIPAE(nn.Module):
             dim_head = self.cfg.dim_head, 
             mlp_dim = self.cfg.mlp_dim)
             
-        self.text_projection_mean = nn.Linear(text_emb_size, combined_latent_size)
-        self.text_projection_log_var = nn.Linear(text_emb_size, combined_latent_size)
+        seq_len = self.cfg.block_size
+        self.text_projection_mean = nn.Linear(text_emb_size*seq_len, combined_latent_size)
+        self.text_projection_log_var = nn.Linear(text_emb_size*seq_len, combined_latent_size)
     
         # Text decoder
-        self.text_unprojection = nn.Linear(combined_latent_size, text_emb_size)
+        self.text_unprojection = nn.Linear(combined_latent_size, text_emb_size*seq_len)
 
         self.text_decoder = vit_pytorch.simple_vit.Transformer(
             dim = text_emb_size, 
@@ -200,11 +203,11 @@ class TIPAE(nn.Module):
         z = self.text_encoder(emb)
         
         #z_pool = z.mean(dim=1)
-        z_pool, _ = z.max(dim=1)
+        #z_pool, _ = z.max(dim=1)
         
         # Projection
-        z_mean = self.text_projection_mean(z_pool.view(batch_size, -1))
-        z_log_var = self.text_projection_log_var(z_pool.view(batch_size, -1))
+        z_mean = self.text_projection_mean(z.view(batch_size, -1))
+        z_log_var = self.text_projection_log_var(z.view(batch_size, -1))
         
         return z_mean, z_log_var
         
@@ -212,15 +215,15 @@ class TIPAE(nn.Module):
         batch_size = combined_z.shape[0]
         
         # Unprojection
-        z_unprojected = self.text_unprojection(combined_z)
-        
         seq_len = self.cfg.block_size
-        z_tiled = z_unprojected.unsqueeze(1).expand(-1, seq_len, -1).view(batch_size, -1, self.cfg.text_emb_size)
+        z_unprojected = self.text_unprojection(combined_z).view(batch_size, -1, self.cfg.text_emb_size)
         
-        emb = self.text_decoder(z_tiled)
+        #z_tiled = z_unprojected.unsqueeze(1).expand(-1, seq_len, -1).view(batch_size, -1, self.cfg.text_emb_size)
+        
+        emb = self.text_decoder(z_unprojected)
         
         x = self.text_fc(emb)
-        x = torch.sigmoid(x)
+        #x = torch.sigmoid(x)
         
         return x
         
@@ -241,11 +244,11 @@ class TIPAE(nn.Module):
         z = self.img_encoder(x)
 
         #z_pool = z.mean(dim=1)
-        z_pool, _ = z.max(dim=1)
+        #z_pool, _ = z.max(dim=1)
 
         # Projection
-        z_mean = self.image_projection_mean(z_pool.view(batch_size, -1))
-        z_log_var = self.image_projection_log_var(z_pool.view(batch_size, -1))
+        z_mean = self.image_projection_mean(z.view(batch_size, -1))
+        z_log_var = self.image_projection_log_var(z.view(batch_size, -1))
         
         return z_mean, z_log_var
         
@@ -253,12 +256,12 @@ class TIPAE(nn.Module):
         
         batch_size = combined_z.shape[0]
 
-        z_unprojected = self.image_unprojection(combined_z)
-
         seq_len = self.cfg.patch_count**2
-        z_tiled = z_unprojected.unsqueeze(1).expand(-1, seq_len, -1).view(batch_size, seq_len, -1)
+        z_unprojected = self.image_unprojection(combined_z).view(batch_size, seq_len, -1)
+
+        #z_tiled = z_unprojected.unsqueeze(1).expand(-1, seq_len, -1).view(batch_size, seq_len, -1)
         
-        x = self.img_decoder(z_tiled)
+        x = self.img_decoder(z_unprojected)
         
         img = self.from_patch_embedding(x)
         
@@ -440,20 +443,50 @@ def generate_display_images(frame, model, real_images, outputs, tokenizer):
 def kl_divergence(mean, log_var):
     return -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
     
+def smooth_labels(labels, smoothing=0.1):
+    """Convert a matrix of one-hot labels to smoothed versions.
+
+    Args:
+    labels (torch.Tensor): A tensor of shape (batch_size, num_classes) where each row is a one-hot encoded vector.
+    smoothing (float): Label smoothing factor.
+
+    Returns:
+    torch.Tensor: A tensor with the same shape as labels but with smoothed label values.
+    """
+    assert 0 <= smoothing < 1
+    with torch.no_grad():
+        num_classes = labels.shape[-1]
+        smoothed_labels = (1.0 - smoothing) * labels + smoothing / num_classes
+    return smoothed_labels
+    
+def smooth_text_loss(tokens_logits_out, tokens_x, NUM_TOKENS, smoothing=0.1):
+    one_hot_tokens = F.one_hot(tokens_x, num_classes=NUM_TOKENS).float()
+    smoothed_tokens = smooth_labels(one_hot_tokens, smoothing)
+    smoothed_tokens = smoothed_tokens.view(-1, NUM_TOKENS)
+    
+    logits_softmax = F.softmax(tokens_logits_out.view(-1, NUM_TOKENS), dim=1)
+    
+    logits_log = torch.log(logits_softmax + 1e-10)  # Adding a small value for numerical stability
+    
+    text_loss = (-smoothed_tokens * logits_log).sum(dim=1).mean()
+    
+    return text_loss
+
+
 def train(frame, device):
 
     BATCH_SIZE = 64
     save_enabled = True
     show_pca = True
-    num_objects = 128
+    num_objects = 12
     
     do_training = True
     load_checkpoint = False
     checkpoint_filepath = "checkpoints/saved/tipae_checkpoint.best.multimodal.utf8.pth"
     
-    img_width = 128
+    img_width = 64
     img_height = img_width
-    block_size = 256
+    block_size = 128
     
     tokenizer = tokenization.UTF8Tokenizer()
     
@@ -461,7 +494,7 @@ def train(frame, device):
     
     # Hyperparameters
     # set a large initial lr as it'll be adjusted by the scheduler
-    learning_rate = 0.001 #10
+    learning_rate = 0.0005 #1 #0.001
     num_epochs = 1000000
     logging_interval = 100
     warmup_steps = 4000
@@ -474,24 +507,25 @@ def train(frame, device):
         cfg = model.cfg
         print(f"Loaded checkpoint from {checkpoint_filepath} at epoch {model.epoch}")
     else:
+        emb_size = 128
         cfg = TIPAEConfig(
             img_width = img_width,
             img_height = img_height,
             channels = 3,
-            emb_size = 256,
+            emb_size = emb_size,
             num_layers = 4,
             num_heads = 4,
             patch_count = 8,
-            mlp_dim = 256*4,
+            mlp_dim = emb_size*4,
             dim_head = 64,
             
-            text_emb_size = 256,
+            text_emb_size = emb_size,
             vocab_size = NUM_TOKENS,
             block_size = block_size,
             dropout = 0.0,
             
-            image_latent_size = 128,
-            text_latent_size = 128
+            image_latent_size = 64,
+            text_latent_size = 64
         )
         
         model = TIPAE(cfg).to(device)
@@ -499,7 +533,7 @@ def train(frame, device):
         # Loss and Optimizer
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = None
-    #scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=4000)
+    #scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=1000)
     
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     
@@ -537,8 +571,10 @@ def train(frame, device):
             
             #print(f"fwd pass in {(fwd_end_time - fwd_start_time)*1000:.3f} ms")
 
-            text_loss = F.cross_entropy(tokens_logits_out.view(-1, NUM_TOKENS), tokens_x.view(-1))
-            img_loss = F.binary_cross_entropy(img_out.view(batch_size,-1), img_x.view(batch_size,-1), reduction='mean')
+            #text_loss = F.cross_entropy(tokens_logits_out.view(-1, NUM_TOKENS), tokens_x.view(-1))
+            text_loss = smooth_text_loss(tokens_logits_out, tokens_x, NUM_TOKENS, smoothing=0.1)
+            
+            img_loss = F.binary_cross_entropy(img_out.view(batch_size,-1), img_x.view(batch_size,-1), reduction='sum')
             
             alignment_loss = F.mse_loss(img_z_mean, text_z_mean)
             
@@ -554,13 +590,13 @@ def train(frame, device):
             beta = 1.0
             img_term = img_loss * beta
             
-            gamma = 0.0
+            gamma = 1.0
             alignment_term = alignment_loss * gamma
             
-            delta = 0.0 * warmup_factor
+            delta = 0.1 * warmup_factor
             img_kl_term = img_kl_loss * delta
             
-            echo = 0.0 * warmup_factor
+            echo = 0.1 * warmup_factor
             text_kl_term = text_kl_loss * echo
             
             
@@ -571,7 +607,12 @@ def train(frame, device):
                 
                 #print(f"loss pass in {(back_start_time - fwd_end_time)*1000:.3f} ms")
 
+                #with torch.autograd.detect_anomaly():
                 total_loss.backward()
+                
+                clip_value = 5.0
+                clip_grad_value_(model.parameters(), clip_value)
+
                 optimizer.step()
                 if scheduler:
                     scheduler.step()
