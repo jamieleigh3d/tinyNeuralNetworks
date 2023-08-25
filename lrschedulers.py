@@ -4,15 +4,16 @@ import torch
 from torch.optim.lr_scheduler import _LRScheduler
 
 class NoamLR(_LRScheduler):
-    def __init__(self, optimizer, d_model, warmup_steps=4000, last_epoch=-1):
+    def __init__(self, optimizer, d_model, warmup_steps=4000, last_epoch=-1, max_lr=0.001):
         self.d_model = d_model
         self.warmup_steps = warmup_steps
+        self.max_lr = max_lr
         super(NoamLR, self).__init__(optimizer, last_epoch)
 
     def get_lr(self):
         step_num = self.last_epoch + 1
         lr = self.d_model ** -0.5 * min(step_num ** -0.5, step_num * self.warmup_steps ** -1.5)
-        return [base_lr * lr for base_lr in self.base_lrs]
+        return [min(base_lr * lr, self.max_lr) for base_lr in self.base_lrs]
 
 if __name__ == "__main__":
     # Example Usage:
