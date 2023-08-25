@@ -9,6 +9,8 @@ class ImageLossFrame(wx.Frame):
     def __init__(self, parent, title):
         super().__init__(parent, title=title, size=(2100, 1200))
         
+        self.SetDoubleBuffered(True)
+        
         self.SetPosition((100, 10))  # Set X and Y coordinates
         
         self.fig, self.axes = plt.subplots(1, 4, figsize=(20, 4))
@@ -154,13 +156,15 @@ class ImageLossFrame(wx.Frame):
 
     def show_images(self, idx_images, label_pairs=None, total_losses=None, avg_losses=None, r_losses=None, learning_rates=None, p_losses=None, latent_vectors=None):
         
+        self.Freeze()
+        
         self.update_plot(total_losses, avg_losses, r_losses, learning_rates, p_losses)
         
         if label_pairs is not None:
             for (idx, text) in label_pairs:
                 self.labels[idx].SetLabel(text)
                 self.labels[idx].Wrap(self.label_width)
-
+        
             # Make sure the layout and display are updated
             #self.Layout()
         
@@ -175,4 +179,5 @@ class ImageLossFrame(wx.Frame):
         if latent_vectors is not None:
             self.show_pca(latent_vectors)
         
+        self.Thaw()
         self.canvas.draw()
