@@ -73,7 +73,7 @@ def train_epoch(model, perceptual_loss, optimizer, epoch, frame, batch, real_ima
     beta_warmup_epochs = 500
     kld_factor = 1.0*min(beta_warmup_epochs,epoch) / beta_warmup_epochs
     
-    p_factor = 1.0
+    p_factor = 0.0
     p_term = p_loss * p_factor
     
     total_loss = r_term + l1_term + p_term
@@ -104,7 +104,7 @@ def generate_display_images(frame, model, real_images, outputs):
         
         num_lerps = frame.cols
         for i in range(num_lerps):
-            alpha = i / num_lerps
+            alpha = i / (num_lerps-1)
             
             latent_lerp = torch_utils.slerp(z1, z2, alpha)
             
@@ -127,7 +127,7 @@ def train(frame, device):
     # set a large initial lr as it'll be adjusted by the scheduler
     learning_rate = .001
     num_epochs = 1000000
-    logging_interval = 10
+    logging_interval = 100
 
     img_width=128
     img_height=128
@@ -137,7 +137,7 @@ def train(frame, device):
         img_height=img_height,
         channels=3,
         emb_size=256,
-        num_layers=4,
+        num_layers=2,
         num_heads=2,
         patch_count=8,
         mlp_dim=1024,
@@ -159,7 +159,7 @@ def train(frame, device):
     perceptual_loss = perceptual.PerceptualLoss().to(device)
 
     
-    obj_data = abo.load_objects(16)
+    obj_data = abo.load_objects(12)
     image_metadata = abo.load_images()
     
     print(f"Num objects: {len(obj_data)}")
@@ -208,7 +208,7 @@ def train(frame, device):
         
             show_image_list = []
             # First batch only
-            if frame and idx%10==0:
+            if frame and epoch%10==0 and idx%10==0:
                 show_image_list = generate_display_images(frame, model, real_images, outputs)
                 
                 if not show_pca:
@@ -231,6 +231,9 @@ def train(frame, device):
             if (epoch+1) % logging_interval == 0:
                 model.save(path / f"vitae_checkpoint.epoch{epoch+1}.pth", optimizer)
             
+            if (epoch+1) % 10 == 0:
+                model.save(path / "vitae_checkpoint.latest.pth", optimizer)
+                
             if lowest_loss is None:
                 lowest_loss = total_loss+1
             if total_loss < lowest_loss:

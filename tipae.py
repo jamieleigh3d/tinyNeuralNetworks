@@ -477,12 +477,12 @@ def smooth_text_loss(tokens_logits_out, tokens_x, NUM_TOKENS, smoothing=0.1):
 def train(frame, device):
 
     BATCH_SIZE = 64
-    save_enabled = False
+    save_enabled = True
     show_pca = True
     num_objects = 12 #102400
     
-    do_training = False
-    load_checkpoint = True
+    do_training = True
+    load_checkpoint = False
     checkpoint_filepath = "checkpoints/saved/tipae_checkpoint.best.20k.epoch1591.pth"
     
     img_width = 128
@@ -495,7 +495,7 @@ def train(frame, device):
     
     # Hyperparameters
     # set a large initial lr as it'll be adjusted by the scheduler
-    learning_rate = 0.1 #0.001
+    learning_rate = 0.001 #0.1 #0.001
     num_epochs = 1000000
     logging_interval = 100
     warmup_steps = 4000
@@ -508,25 +508,25 @@ def train(frame, device):
         cfg = model.cfg
         print(f"Loaded checkpoint from {checkpoint_filepath} at epoch {model.epoch}")
     else:
-        emb_size = 128
+        emb_size = 256
         cfg = TIPAEConfig(
             img_width = img_width,
             img_height = img_height,
             channels = 3,
             emb_size = emb_size,
             num_layers = 4,
-            num_heads = 4,
+            num_heads = 2,
             patch_count = 8,
             mlp_dim = emb_size*4,
-            dim_head = 128,
+            dim_head = 64,
             
             text_emb_size = emb_size,
             vocab_size = NUM_TOKENS,
             block_size = block_size,
             dropout = 0.0,
             
-            image_latent_size = 64,
-            text_latent_size = 64
+            image_latent_size = 128,
+            text_latent_size = 128
         )
         
         model = TIPAE(cfg).to(device)
@@ -534,7 +534,7 @@ def train(frame, device):
         # Loss and Optimizer
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = None
-    scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=4000)
+    #scheduler = lrschedulers.NoamLR(optimizer, d_model=cfg.emb_size, warmup_steps=4000)
     
     print(f"Learnable parameters: {model.learnable_params():,} Total: {model.total_params():,}")
     

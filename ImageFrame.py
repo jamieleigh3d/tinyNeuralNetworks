@@ -156,9 +156,9 @@ class ImageLossFrame(wx.Frame):
 
     def show_images(self, idx_images, label_pairs=None, total_losses=None, avg_losses=None, r_losses=None, learning_rates=None, p_losses=None, latent_vectors=None):
         
-        self.Freeze()
-        
         self.update_plot(total_losses, avg_losses, r_losses, learning_rates, p_losses)
+        
+        self.Freeze()
         
         if label_pairs is not None:
             for (idx, text) in label_pairs:
@@ -168,6 +168,7 @@ class ImageLossFrame(wx.Frame):
             # Make sure the layout and display are updated
             #self.Layout()
         
+        self.Thaw()
         for (idx, img) in idx_images:
             width, height = (128,128)
             if img.width < width or img.height < height:
@@ -179,5 +180,4 @@ class ImageLossFrame(wx.Frame):
         if latent_vectors is not None:
             self.show_pca(latent_vectors)
         
-        self.Thaw()
         self.canvas.draw()
