@@ -112,12 +112,24 @@ class WordTokenizer(Tokenizer):
 class UTF8Tokenizer(Tokenizer):
     def __init__(self):
         super().__init__()
+        
+        #TODO support extended unicode
+        text = ""
+        for idx in range(0x20, 0x7E+1):
+            text += chr(idx)
+        for idx in range(0xA0, 0xFF+1):
+            text += chr(idx)
+        text += "\n\t"
+        self._build_vocab([text])
 
     def _tokenize(self, texts):
         """Tokenize a list of strings by individual UTF-8 characters."""
         return [list(text) for text in texts]
-
+        
     def build_vocab(self, texts):
+        pass
+
+    def _build_vocab(self, texts):
         """Creates a vocabulary for utf-8 characters present in the training text."""
         self.vocab_set.update(self.special_tokens)  # Directly add all special tokens
 
@@ -284,6 +296,10 @@ class BPETokenizer(Tokenizer):
 
 
 if __name__ == "__main__":
+    import sys
+    
+    sys.stdout.reconfigure(encoding='utf-8')
+    
     input_texts = [
         "hello world!",
         "NLTK is a leading platform for building Python programs.",
