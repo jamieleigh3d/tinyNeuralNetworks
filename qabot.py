@@ -11,203 +11,11 @@ import lrschedulers
 import dataset_utils
 from dataset_utils import escape
 import abo as abo
-import torch_utils
-
-class TextTransformer(nn.Module):
-    def __init__(self, vocab_size, block_size=1024, embed_dim=64, num_heads=4, num_decoder_layers=2, dropout=0.1):
-        super(TextTransformer, self).__init__()
-        
-        self.block_size = block_size
-        self.embedding = nn.Embedding(vocab_size, embed_dim)
-        #self.pos_embedding = nn.Embedding(block_size, embed_dim)
-        self.dropout = nn.Dropout(dropout)
-        
-        self.pos_enc = self.positional_encoding(block_size, embed_dim)
-        
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=embed_dim, 
-            nhead=num_heads,
-            batch_first = True,
-        )
-        self.transformer_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_decoder_layers)
-        
-        self.fc = nn.Linear(embed_dim, vocab_size)
-        # Tie embedding weights with fc weights
-        self.fc.weight = self.embedding.weight
-        
-        
-    def forward(self, x, padding_mask=None, look_ahead_mask=None):
-        emb = self.embedding(x)
-        
-        #t = x.shape[1]
-        #positions = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
-        #pos_emb = self.pos_embedding(positions)
-        pos_emb = self.pos_enc[:, :emb.size(1)].to(x.device)
-        
-        emb = self.dropout(emb + pos_emb)
-        
-        z = self.transformer_decoder(
-            tgt = emb, 
-            memory = emb, 
-            tgt_mask = look_ahead_mask,
-            memory_mask = look_ahead_mask,
-            tgt_key_padding_mask = padding_mask,
-        )
-        
-        z_mean = torch.mean(z, dim=1)
-        
-        # taking only the last token for prediction, [-1] preserving the dimensionality
-        x = self.fc(z)
-        return x, z_mean
-        
-    def positional_encoding(self, seq_len, d_model):
-        position = torch.arange(seq_len).unsqueeze(1).float()
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
-        
-        pos_enc = torch.empty(seq_len, d_model)
-        pos_enc[:, 0::2] = torch.sin(position * div_term)
-        pos_enc[:, 1::2] = torch.cos(position * div_term)
-        
-        pos_enc = pos_enc.unsqueeze(0)
-        return pos_enc
-        
-    def learnable_params(self):
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
-    def total_params(self):
-        return sum(p.numel() for p in self.parameters())
-
-    # Modified from NanoGPT https://github.com/karpathy/nanoGPT/ Under MIT License
-    @torch.no_grad()
-    def generate(self, idx, max_new_tokens=1, temperature=1.0, top_k=None, eos_token=None, pad_token=None):
-        """
-        Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
-        the sequence max_new_tokens times, feeding the predictions back into the model each time.
-        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
-        """
-        #generated_tokens = []
-        for _ in range(max_new_tokens):
-            # if the sequence context is growing too long we must crop it at block_size
-            idx_cond = idx if idx.size(1) <= self.block_size else idx[:, -self.block_size:]
-            
-            if pad_token is not None:
-                padding_mask, _ = self.create_masks(idx_cond, pad_token)
-                logits, z = self(idx_cond, padding_mask=None)
-            else:
-                # forward the model to get the logits for the index in the sequence
-                logits = self(idx_cond)
-            # pluck the logits at the final step and scale by desired temperature
-            logits = logits[:, -1, :] / temperature
-            # optionally crop the logits to only the top k options
-            if top_k is not None:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float('Inf')
-            
-            # apply softmax to convert logits to (normalized) probabilities
-            probs = F.softmax(logits, dim=-1)
-            # sample from the distribution
-            idx_next = torch.multinomial(probs, num_samples=1)
-            # append sampled index to the running sequence and continue
-            idx = torch.cat((idx, idx_next), dim=1)
-            
-            if eos_token is not None and idx_next.item() == eos_token:
-                break
-
-        return idx
-        
-    @staticmethod
-    def create_masks(x, pad_token):
-        """Create padding masks for the src sequence."""
-        padding_mask = (x == pad_token).bool().to(x.device)
-        tgt_len = x.shape[1]
-        #look_ahead_mask = nn.Transformer.generate_square_subsequent_mask(tgt_len, x.device)
-        look_ahead_mask = torch.triu(torch.ones((tgt_len, tgt_len)), diagonal=1).bool().to(x.device)
-        #print(f"x.shape: {x.shape} pm: {padding_mask.shape} lam: {look_ahead_mask.shape}")
-        #print(f"x: {x}\npm: {padding_mask}\nlam: {look_ahead_mask}")
-        
-        return padding_mask, look_ahead_mask
-
-    
-    def save(self, filepath, optimizer, epoch):
-        """
-        Save the model's parameters and additional training-related information to a file.
-        
-        Args:
-            filepath (str): The path to the file where the model's parameters should be saved.
-            optimizer (torch.optim.Optimizer): The optimizer used for training.
-            epoch (int): The current epoch number.
-        """
-        checkpoint = {
-            'model_state_dict': self.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'epoch': epoch
-        }
-        torch.save(checkpoint, filepath)
-        #print(f'Checkpoint saved to {filepath}')
-
-    def load(self, filepath, optimizer=None):
-        """
-        Load the model's parameters and additional training-related information from a file.
-        
-        Args:
-            filepath (str): The path to the file from which the model's parameters should be loaded.
-            optimizer (torch.optim.Optimizer, optional): The optimizer used for training. If provided, its state will be updated.
-        
-        Returns:
-            int: The last saved epoch number.
-        """
-        checkpoint = torch.load(filepath, map_location='cpu')
-        self.load_state_dict(checkpoint['model_state_dict'])
-        
-        if optimizer:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        
-        epoch = checkpoint['epoch']
-        
-        return epoch
-
-    
-def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
-    model.train()
-    
-    lowest_loss = None
-    save_enabled = True
-    
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    
-    for epoch in trange(epochs, desc="Training"):
-        epoch_loss = 0
-        for batch_idx, (x, y) in enumerate(tqdm(dataloader, leave=False, desc="Batch")):
-            
-            optimizer.zero_grad()
-            padding_mask, look_ahead_mask = model.create_masks(x, pad_token)
-            
-            outputs,z = model(
-                x,
-                padding_mask=None,
-                look_ahead_mask=look_ahead_mask)
-                
-            loss = F.cross_entropy(outputs.view(-1, NUM_TOKENS), y.view(-1))
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-        
-        avg_epoch_loss = epoch_loss / len(dataloader)
-        print(f"Epoch Loss: {avg_epoch_loss}")
-        
-        if save_enabled:
-            folder = "checkpoints"
-            path = torch_utils.create_directory(folder)
-
-            model.save(path / f"tinygpt_checkpoint.epoch{epoch}.pth", optimizer, epoch)
-            if lowest_loss is None:
-                lowest_loss = avg_epoch_loss+1
-            if avg_epoch_loss < lowest_loss:
-                lowest_loss = avg_epoch_loss
-                model.save(path / f"tinygpt_checkpoint.best.pth", optimizer, epoch)
+import text_transformer as tt
 
 if __name__ == "__main__":
     import sys
+    import torch_utils
     
     sys.stdout.reconfigure(encoding='utf-8')
 
@@ -303,7 +111,7 @@ if __name__ == "__main__":
     dataloader = DataLoader(tensor_dataset, batch_size=BATCH_SIZE, shuffle=False)
     
     # Instantiate and train the model
-    model = TextTransformer(
+    model = tt.TextTransformer(
         vocab_size=NUM_TOKENS, 
         block_size=MAX_SEQ_LEN,
         embed_dim=embed_dim, 
@@ -323,7 +131,7 @@ if __name__ == "__main__":
     pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
     
     if do_training:
-        train_text(model, dataloader, NUM_TOKENS, pad_idx, epochs=epochs)
+        tt.train_text(model, dataloader, NUM_TOKENS, pad_idx, epochs=epochs)
     
     print("Training finished!")
     

@@ -6,7 +6,7 @@ import os
 import requests
 from tqdm import tqdm
 
-class JsonParser:
+class hc3_dataset:
     def __init__(self, filepath='data/hc3-all.jsonl'):
         # Create the data directory if it doesn't exist
         if not os.path.exists('data'):
@@ -45,7 +45,7 @@ class JsonParser:
 
     def len(self):
         return len(self.data)
-                
+    
     def get_question(self, index):
         return self.data[index]['question']
     
@@ -65,13 +65,13 @@ if __name__ == "__main__":
     
     sys.stdout.reconfigure(encoding='utf-8')
     
-    parser = JsonParser('data/hc3-all.jsonl')
+    parser = hc3_dataset('data/hc3-all.jsonl')
     question = parser.get_question(0)  # get the question from the first line
     human_answers = parser.get_human_answers(0)  # get human answers from the first line
     chatgpt_answers = parser.get_chatgpt_answers(0)  # get chatgpt answers from the first line
     source = parser.get_source(0)  # get the source from the first line
 
     print("Question:", question)
-    print("Human Answers:", human_answers)
-    print("ChatGPT Answers:", chatgpt_answers)
+    print("Human Answers:", len(human_answers))
+    print("ChatGPT Answers:", len(chatgpt_answers))
     print("Source:", source)

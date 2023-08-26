@@ -14,10 +14,50 @@ def escape(input_string):
     return replaced_newlines
 
 class TextDatasetSequencer():
-    def __init__(self, tokenizer):
+    def __init__(self, tokenizer, pad_left=True):
         self.tokenizer = tokenizer
+        self.pad_left = pad_left
     
-    def load(self, input_texts, seq_len=8, use_padding=True):
+    def pad(self, tokens, seq_len):
+        pad_idx = self.tokenizer.special_token_to_index(self.tokenizer.pad_token)
+        pad_length = max(0, seq_len - len(tokens))
+        
+        if self.pad_left:
+            return [pad_idx] * pad_length + tokens
+        else:
+            return tokens + [pad_idx] * pad_length
+
+    
+    def load2(self, input_texts, seq_len):
+        tokenizer = self.tokenizer
+        
+        tokenizer.build_vocab(input_texts)
+        training_tokens = tokenizer.texts_to_indices(input_texts)
+        
+        pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
+    
+        tokenizer.wrap(training_tokens)
+        
+        input_sequences = []
+        target_sequences = []
+        for t in training_tokens:
+            
+            for s in range(1,min(seq_len,len(t))):
+                #Start in the first character
+                i=0
+                sequence = t[i:i+s]
+                next = t[i:i+s+1]
+                
+                sequence = self.pad(sequence, seq_len)
+                next = self.pad(next, seq_len)
+                
+                input_sequences.append(sequence)
+                target_sequences.append(next)
+        
+
+        return input_sequences, target_sequences
+    
+    def load(self, input_texts, seq_len, use_padding=True):
         tokenizer = self.tokenizer
         
         tokenizer.build_vocab(input_texts)
