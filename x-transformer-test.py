@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 import tokenization as T
 import lrschedulers
-from datasets import TextDataset, escape
+from dataset_utils import TextDatasetSequencer, escape
 
 
 def generate_mask(batch, pad_token):
@@ -39,20 +39,19 @@ if __name__ == "__main__":
     input_texts = [ "Got milk?" ]
     
     tokenizer = T.UTF8Tokenizer()
-    dataset = TextDataset(tokenizer)
+    dataset = TextDatasetSequencer(tokenizer)
     
     MAX_SEQ_LEN = 8
     
-    input_sequences, input_masks, target_sequences = dataset.load(input_texts, seq_len=MAX_SEQ_LEN)
+    input_sequences, target_sequences = dataset.load(input_texts, seq_len=MAX_SEQ_LEN)
     
     print(len(input_sequences))
-    print(len(input_masks))
     
     start_seq_idx = tokenizer.special_token_to_index(tokenizer.sta_token)
     end_seq_idx = tokenizer.special_token_to_index(tokenizer.eos_token)
     pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
     
-    str_list = tokenizer.indices_to_texts(input_sequences, input_masks)
+    str_list = tokenizer.indices_to_texts(input_sequences)
     target = tokenizer.indices_to_texts(target_sequences)
     for idx, str in enumerate(str_list):
         targ = target[idx]
@@ -70,9 +69,8 @@ if __name__ == "__main__":
     
     # Prepare data for DataLoader
     X = torch.tensor(input_sequences)
-    Xm = torch.tensor(input_masks, dtype=bool)
     Y = torch.tensor(target_sequences)
-    tensor_dataset = TensorDataset(X, Xm, Y)
+    tensor_dataset = TensorDataset(X, Y)
     dataloader = DataLoader(tensor_dataset, batch_size=BATCH_SIZE, shuffle=True)
     
     # Model
@@ -101,12 +99,11 @@ if __name__ == "__main__":
     # Training loop
     for epoch in range(EPOCHS):
         epoch_loss = 0
-        for batch_idx, (x, xm, y) in enumerate(dataloader):
+        for batch_idx, (x, y) in enumerate(dataloader):
             x = x.to(device)
-            xm = xm.to(device)
             y = y.to(device)
             optimizer.zero_grad()
-            outputs = model(x, mask=xm)
+            outputs = model(x)
             #print(f"x: {x.shape} outputs: {outputs.shape} y: {y.shape}")
             loss = F.cross_entropy(outputs.view(-1, NUM_TOKENS), y.view(-1))
             #loss = loss * mask
