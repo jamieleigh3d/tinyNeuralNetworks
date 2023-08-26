@@ -11,8 +11,10 @@ class Tokenizer(ABC):
         self.pad_token = "<P>"
         self.sta_token = "<S>"
         self.eos_token = "<E>"
+        self.user_token = "<User>"
+        self.bot_token = "<Bot>"
         self.unknown_token = "<U>"
-        self.special_tokens = [self.pad_token, self.unknown_token, self.eos_token, self.sta_token]
+        self.special_tokens = [self.pad_token, self.unknown_token, self.eos_token, self.sta_token, self.user_token, self.bot_token]
         self.vocab_set = set(self.special_tokens)
     
     @abstractmethod
@@ -244,7 +246,7 @@ class BPETokenizer(Tokenizer):
         self.pad_token = "<|p|>"
         self.sta_token = "<|s|>"
         self.eos_token = "<|endoftext|>"
-        self.eos_idx = 50256
+        self.eos_idx = 50256 # from the downloaded json
         self.special_tokens = [self.pad_token, self.eos_token]
         self.pad_idx = self.encoder.add_special(self.pad_token)
         self.sta_idx = self.encoder.add_special(self.sta_token)

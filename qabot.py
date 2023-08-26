@@ -12,10 +12,69 @@ import dataset_utils
 from dataset_utils import escape
 import abo as abo
 import text_transformer as tt
+import torch_utils
+
+class qa_sequencer():
+    def __init__(self, tokenizer, seq_len):
+        self.tokenizer = tokenizer
+        self.seq_len = seq_len
+        assert seq_len > 0, "seq_len must be 1 or more"
+
+    def pad(self, tokens, pad_left=True):
+        pad_idx = self.tokenizer.special_token_to_index(self.tokenizer.pad_token)
+        pad_length = max(0, self.seq_len - len(tokens))
+        
+        if pad_left:
+            return [pad_idx] * pad_length + tokens
+        else:
+            return tokens + [pad_idx] * pad_length
+
+    def wrap_qa(self, q_tokens, a_tokens):
+        tokenizer = self.tokenizer
+        start_token = tokenizer.special_token_to_index(tokenizer.sta_token)
+        end_token = tokenizer.special_token_to_index(tokenizer.eos_token)
+        user_idx = tokenizer.special_token_to_index(tokenizer.user_token)
+        bot_idx = tokenizer.special_token_to_index(tokenizer.bot_token)
+        
+        # First truncate, -3/-1 to leave room for user/bot and start/eos tokens
+        q_tokens[:] = q_tokens[:self.seq_len-3]
+        a_tokens[:] = a_tokens[:self.seq_len-1]
+    
+        # <S><User>Question<Bot>
+        q_tokens[:] = [start_token] + [user_idx] + q_tokens + [bot_idx]
+        
+        #Answer<E>
+        a_tokens[:] = a_tokens + [end_token]
+
+    def parse_qa(self, qa_pairs):
+        
+        input_tokens = []
+        target_tokens = []
+        for qa in qa_pairs:
+            q_text = qa['question']
+            a_text = qa['answer']
+            
+            q_tokens = self.tokenizer.text_to_indices(q_text)
+            a_tokens = self.tokenizer.text_to_indices(a_text)
+            
+            self.wrap_qa(q_tokens, a_tokens)
+            
+            for idx in range(len(a_tokens)):
+                str = q_tokens + a_tokens[:idx+1]
+                print(str)
+                # +1 so we capture the next token
+                str[:] = str[-(self.seq_len+1):]
+                x_tokens = self.pad(str[:-1])
+                y_tokens = self.pad(str[-self.seq_len:])
+                
+                input_tokens.append(x_tokens)
+                target_tokens.append(y_tokens)
+            
+        return input_tokens, target_tokens
 
 if __name__ == "__main__":
     import sys
-    import torch_utils
+    
     
     sys.stdout.reconfigure(encoding='utf-8')
 
@@ -26,55 +85,126 @@ if __name__ == "__main__":
     torch_utils.seed_everywhere(0)
     
     # Dummy dataset
-    input_texts = [
-        "hello world!",
-        "NLTK is a leading platform for building Python programs.",
-        "See spot run. Run spot run!",
-        "My # is 123-456-7890. Got that?",
-        "Hello!!!? Are you there??",
-        "this is a test\nwith a newline\tand a tab",
-        "Got milk?",
+    qa_pairs = [
+        {
+            "question": "What movie, based on a Stephen King novella, is set in a prison and revolves around the friendship of Andy Dufresne and Red?",
+            "answer": "The Shawshank Redemption"
+        },
+        {
+            "question": "Which film features Tim Robbins and Morgan Freeman in leading roles, navigating life in a penitentiary?",
+            "answer": "The Shawshank Redemption"
+        },
+        {
+            "question": "Which iconic film is known for its quote, 'Get busy living, or get busy dying'?",
+            "answer": "The Shawshank Redemption"
+        },
+        {
+            "question": "In which movie does the protagonist manage to escape from prison through a tunnel he dug over decades?",
+            "answer": "The Shawshank Redemption"
+        },
+        {
+            "question": "What is the name of the film where the main character is falsely accused of murdering his wife and her lover?",
+            "answer": "The Shawshank Redemption"
+        },
+        {
+            "question": "Which movie, directed by Francis Ford Coppola, introduces us to the Corleone crime family?",
+            "answer": "The Godfather"
+        },
+        {
+            "question": "Al Pacino, Robert Duvall, and Marlon Brando starred together in which iconic mafia film?",
+            "answer": "The Godfather"
+        },
+        {
+            "question": "Which film's famous line is, 'I'm gonna make him an offer he can't refuse'?",
+            "answer": "The Godfather"
+        },
+        {
+            "question": "In which film does a movie producer find the head of his prized horse in his bed?",
+            "answer": "The Godfather"
+        },
+        {
+            "question": "Which classic movie begins with the line, 'I believe in America'?",
+            "answer": "The Godfather"
+        },
+        {
+            "question": "Which movie features Heath Ledger's Oscar-winning portrayal of the Joker?",
+            "answer": "The Dark Knight"
+        },
+        {
+            "question": "In which sequel to 'Batman Begins' does Batman face off against a villain who wants to create chaos in Gotham?",
+            "answer": "The Dark Knight"
+        },
+        {
+            "question": "'Why so serious?' is a famous line from which superhero film?",
+            "answer": "The Dark Knight"
+        },
+        {
+            "question": "Which Christopher Nolan-directed film includes a dramatic scene involving a flipped semi-truck in the middle of a city street?",
+            "answer": "The Dark Knight"
+        },
+        {
+            "question": "In which film does Batman have to choose between saving Harvey Dent or Rachel Dawes from the Joker's trap?",
+            "answer": "The Dark Knight"
+        },
+        {
+            "question": "Which sequel is unique in that it serves both as a prequel and a continuation of the original, with scenes featuring a young Vito Corleone?",
+            "answer": "The Godfather Part II"
+        },
+        {
+            "question": "Robert De Niro won an Academy Award for his role in which film about the rise of a crime family?",
+            "answer": "The Godfather Part II"
+        },
+        {
+            "question": "Which film portrays the early life of Vito Corleone in New York City while also following his son Michael's expansion and tightened grip on the family crime syndicate?",
+            "answer": "The Godfather Part II"
+        },
+        {
+            "question": "Which classic film is set almost entirely in a single jury deliberation room?",
+            "answer": "12 Angry Men"
+        },
+        {
+            "question": "In which movie does Henry Fonda play a juror who tries to convince the others that there's a reasonable doubt about the guilt of the accused?",
+            "answer": "12 Angry Men"
+        }
     ]
-
-    film_titles = [
-        "The Shawshank Redemption", "The Godfather", "The Dark Knight", "The Godfather Part II", "12 Angry Men", "Schindler's List", "The Lord of the Rings: The Return of the King", "Pulp Fiction", "The Lord of the Rings: The Fellowship of the Ring", "The Good, the Bad and the Ugly", "Forrest Gump", "Fight Club", "The Lord of the Rings: The Two Towers", "Inception", "Star Wars: Episode V - The Empire Strikes Back", "The Matrix", "Goodfellas", "Spider-Man: Across the Spider-Verse", "One Flew Over the Cuckoo's Nest", "Se7en", "It's a Wonderful Life", "Seven Samurai", "The Silence of the Lambs", "Interstellar", "Saving Private Ryan", "City of God", "Life Is Beautiful", "The Green Mile", "Star Wars: Episode IV - A New Hope", "Terminator 2: Judgment Day", "Back to the Future", "Spirited Away", "The Pianist", "Psycho", "Parasite", "Oppenheimer", "Gladiator", "The Lion King", "Léon: The Professional", "American History X", "The Departed", "Whiplash", "The Prestige", "The Usual Suspects", "Grave of the Fireflies", "Casablanca", "Harakiri", "The Intouchables", "Modern Times", "Cinema Paradiso", "Once Upon a Time in the West", "Rear Window", "Alien", "City Lights", "Apocalypse Now", "Memento", "Django Unchained", "Indiana Jones and the Raiders of the Lost Ark", "WALL·E", "The Lives of Others", "Sunset Blvd.", "Paths of Glory", "Avengers: Infinity War", "The Shining", "The Great Dictator", "Witness for the Prosecution", "Spider-Man: Into the Spider-Verse", "Aliens", "American Beauty", "The Dark Knight Rises", "Inglourious Basterds", "Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb", "Oldboy", "Coco", "Amadeus", "Toy Story", "Braveheart", "Das Boot", "Joker", "Avengers: Endgame", "Princess Mononoke", "Good Will Hunting", "Once Upon a Time in America", "Your Name.", "3 Idiots", "High and Low", "Singin' in the Rain", "Requiem for a Dream", "Capernaum", "Toy Story 3", "Come and See", "Star Wars: Episode VI - Return of the Jedi", "Eternal Sunshine of the Spotless Mind", "2001: A Space Odyssey", "The Hunt", "Reservoir Dogs", "Ikiru", "Lawrence of Arabia", "Citizen Kane", "M", "North by Northwest", "The Apartment", "Vertigo", "Double Indemnity", "Amélie", "Scarface", "Full Metal Jacket", "A Clockwork Orange", "Incendies", "Hamilton", "Heat", "Up", "To Kill a Mockingbird", "The Sting", "A Separation", "Indiana Jones and the Last Crusade", "Metropolis", "Die Hard", "L.A. Confidential", "Bicycle Thieves", "Snatch", "Like Stars on Earth", "Taxi Driver", "1917", "Downfall", "Dangal", "Top Gun: Maverick", "For a Few Dollars More", "Batman Begins", "Some Like It Hot", "The Kid", "The Wolf of Wall Street", "The Father", "Green Book", "All About Eve", "Judgment at Nuremberg", "The Truman Show", "Ran", "There Will Be Blood", "Casino", "Shutter Island", "Pan's Labyrinth", "Unforgiven", "The Sixth Sense", "Jurassic Park", "A Beautiful Mind", "The Treasure of the Sierra Madre", "Yojimbo", "No Country for Old Men", "Monty Python and the Holy Grail", "Kill Bill: Vol. 1", "The Great Escape", "The Thing", "Rashomon", "Finding Nemo", "The Elephant Man", "Chinatown", "Spider-Man: No Way Home", "V for Vendetta", "Gone with the Wind", "Raging Bull", "Dial M for Murder", "Howl's Moving Castle", "Lock, Stock and Two Smoking Barrels", "The Secret in Their Eyes", "Inside Out", "Prisoners", "Three Billboards Outside Ebbing, Missouri", "The Bridge on the River Kwai", "Trainspotting", "Fargo", "Warrior", "Gran Torino", "Catch Me If You Can", "My Neighbor Totoro", "Million Dollar Baby", "Klaus", "Children of Heaven", "Harry Potter and the Deathly Hallows: Part 2", "Blade Runner", "12 Years a Slave", "Before Sunrise", "The Gold Rush", "The Grand Budapest Hotel", "Ben-Hur", "Gone Girl", "On the Waterfront", "Barry Lyndon", "Hacksaw Ridge", "In the Name of the Father", "The General", "The Deer Hunter", "Wild Strawberries", "Memories of Murder", "The Third Man", "The Wages of Fear", "Wild Tales", "Sherlock Jr.", "Mad Max: Fury Road", "Dead Poets Society", "Mr. Smith Goes to Washington", "Monsters, Inc.", "How to Train Your Dragon", "Mary and Max", "Jaws", "The Seventh Seal", "Room", "The Big Lebowski", "Ford v Ferrari", "Tokyo Story", "Ratatouille", "Hotel Rwanda", "The Passion of Joan of Arc", "Rocky", "Logan", "Platoon", "Spotlight", "The Terminator", "Jai Bhim", "Before Sunset", "Rush", "Network", "Stand by Me", "The Best Years of Our Lives", "The Wizard of Oz", "Into the Wild", "La haine", "The Exorcist", "Pirates of the Caribbean: The Curse of the Black Pearl", "The Incredibles", "To Be or Not to Be", "My Father and My Son", "Groundhog Day", "The Grapes of Wrath", "Hachi: A Dog's Tale", "The Battle of Algiers", "The Handmaiden", "Amores Perros", "Rebecca", "Cool Hand Luke", "Pather Panchali", "The Sound of Music", "It Happened One Night", "The Iron Giant", "The 400 Blows", "The Help", "Persona", "Life of Brian", "Aladdin", "Drishyam",
-    ]
-
-    #input_texts = [
-    #    "See spot run. Run spot run!"
-    #]
-
-    #input_texts = [ "Got the milk?" ]
-    input_texts = [ "Got milk?" ]
-    #input_texts = [ "Go buy milk?" ]
-    #input_texts = [ "Dog" ]
     
+    qa_pairs2 = [
+        {
+            "question": "Hello?",
+            "answer": "World!"
+        },
+        {
+            "question": "Hi?",
+            "answer": "There."
+        },
+        {
+            "question": "Sentient?",
+            "answer": "Soon..."
+        },
+    ]
     #obj_data = abo.load_objects(10)
     #input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
-    #input_texts = film_titles
     
-    #[print(t) for t in input_texts]
+    MAX_SEQ_LEN = 256
     
-    print(len(input_texts))
-    
-    #tokenizer = T.UTF8Tokenizer()
+    tokenizer = T.UTF8Tokenizer()
     #tokenizer = T.WordTokenizer()
-    tokenizer = T.BPETokenizer()
-    sequencer = dataset_utils.TextDatasetSequencer(tokenizer)
+    #tokenizer = T.BPETokenizer()
     
-    MAX_SEQ_LEN = 16
+    sequencer = qa_sequencer(tokenizer, MAX_SEQ_LEN)
     
-    input_sequences, target_sequences = sequencer.load2(
-        input_texts, 
-        seq_len=MAX_SEQ_LEN,
-    )
+    input_sequences, target_sequences = sequencer.parse_qa(qa_pairs)
+
+    print(len(input_sequences))
+    
     
     show_inputs = True
     if show_inputs:
-        for idx, (tokens, next_token) in enumerate(zip(input_sequences, target_sequences)):
+        for idx, (tokens, next_tokens) in enumerate(zip(input_sequences, target_sequences)):
+            #print(f"'{tokens}' => '{next_tokens}'")
             str = tokenizer.indices_to_text(tokens,hide_pad=False)
-            target = tokenizer.indices_to_text(next_token,hide_pad=False)
+            target = tokenizer.indices_to_text(next_tokens,hide_pad=False)
             
             print(f"'{escape(str)}' => '{escape(target)}'")
     
@@ -84,7 +214,7 @@ if __name__ == "__main__":
     # Hyperparameters
     BATCH_SIZE = 128
     NUM_TOKENS = tokenizer.vocab_size()
-    epochs = 100
+    epochs = 500
     embed_dim = 128
     num_heads = 2
     num_layers = 2
@@ -92,7 +222,8 @@ if __name__ == "__main__":
     
     do_training = True
     load_checkpoint = False
-    checkpoint_path = "checkpoints/saved/tinygpt_checkpoint.best.top250filmtitles.pth"
+    checkpoint_path = "checkpoints/tinygpt_checkpoint.best.pth"
+    #checkpoint_path = "checkpoints/saved/tinygpt_checkpoint.best.top250filmtitles.pth"
     #checkpoint_path = "tinygpt_checkpoint.char.500titles.e64.h8.l8.len64.pth"
     # BATCH_SIZE = 256
     # NUM_TOKENS = tokenizer.vocab_size()
@@ -128,6 +259,8 @@ if __name__ == "__main__":
     
     sta_seq_idx = tokenizer.special_token_to_index(tokenizer.sta_token)
     end_seq_idx = tokenizer.special_token_to_index(tokenizer.eos_token)
+    user_idx = tokenizer.special_token_to_index(tokenizer.user_token)
+    bot_idx = tokenizer.special_token_to_index(tokenizer.bot_token)
     pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
     
     if do_training:
@@ -140,10 +273,10 @@ if __name__ == "__main__":
         while True:
 
             print()
-            prompt = input(">")[-MAX_SEQ_LEN-1:]
+            prompt = input(">")[-MAX_SEQ_LEN-2:]
             tokens = tokenizer.text_to_indices(prompt)
             
-            tokens.insert(0, sta_seq_idx)
+            tokens = [sta_seq_idx] + [user_idx] + tokens + [bot_idx]
             tokens = sequencer.pad(tokens, MAX_SEQ_LEN)
             
             # recon = tokenizer.indices_to_text(tokens,hide_pad=True)
@@ -151,7 +284,7 @@ if __name__ == "__main__":
             
             x = torch.tensor(tokens).unsqueeze(0).to(device)
             
-            max_new_tokens = 20
+            max_new_tokens = 200
             temperature = 1.0
             top_k = 5
             outputs = model.generate(
