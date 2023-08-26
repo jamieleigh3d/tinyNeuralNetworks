@@ -61,7 +61,7 @@ class qa_sequencer():
             
             for idx in range(len(a_tokens)):
                 str = q_tokens + a_tokens[:idx+1]
-                print(str)
+                
                 # +1 so we capture the next token
                 str[:] = str[-(self.seq_len+1):]
                 x_tokens = self.pad(str[:-1])
@@ -74,7 +74,7 @@ class qa_sequencer():
 
 if __name__ == "__main__":
     import sys
-    
+    import hc3
     
     sys.stdout.reconfigure(encoding='utf-8')
 
@@ -269,8 +269,12 @@ if __name__ == "__main__":
     #obj_data = abo.load_objects(10)
     #input_texts = [abo.get_itemname_for_object(obj) for obj in obj_data]
     
+    dataset = hc3.hc3_dataset()
+    qa_pairs = dataset.get_qa_pairs(1)
+    qa_pairs_val = dataset.get_qa_pairs(2)[1:]
+    [print(qa) for qa in qa_pairs]
     
-    MAX_SEQ_LEN = 256
+    MAX_SEQ_LEN = 128
     
     tokenizer = T.UTF8Tokenizer()
     #tokenizer = T.WordTokenizer()
@@ -286,7 +290,7 @@ if __name__ == "__main__":
     print(len(input_sequences))
     
     
-    show_inputs = True
+    show_inputs = False
     if show_inputs:
         for idx, (tokens, next_tokens) in enumerate(zip(input_sequences, target_sequences)):
             #print(f"'{tokens}' => '{next_tokens}'")
@@ -299,12 +303,12 @@ if __name__ == "__main__":
     #exit()
     
     # Hyperparameters
-    BATCH_SIZE = 32
+    BATCH_SIZE = 64
     NUM_TOKENS = tokenizer.vocab_size()
-    epochs = 200
+    epochs = 2000
     embed_dim = 128
-    num_heads = 4
-    num_layers = 4
+    num_heads = 2
+    num_layers = 2
     dropout = 0.1
     
     do_training = True
@@ -361,7 +365,7 @@ if __name__ == "__main__":
             dataloader, 
             NUM_TOKENS, 
             pad_idx, 
-            val_dataloader=val_dataloader, 
+            val_dataloader=None,#val_dataloader, 
             device=device, 
             epochs=epochs
         )

@@ -57,6 +57,20 @@ class hc3_dataset:
     
     def get_source(self, index):
         return self.data[index]['source']
+        
+    def get_qa_pairs(self, count=None):
+        qa_pairs = []
+        
+        for idx in range(self.len()):
+            q = self.get_question(idx)
+            a = self.get_human_answers(idx)[0]
+            
+            qa_pairs.append({'question': q, 'answer': a})
+            if count is not None and len(qa_pairs) > count:
+                qa_pairs[:] = qa_pairs[:count]
+                break
+            
+        return qa_pairs
 
 # Usage example
 if __name__ == "__main__":
