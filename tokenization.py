@@ -246,10 +246,14 @@ class BPETokenizer(Tokenizer):
         self.pad_token = "<|p|>"
         self.sta_token = "<|s|>"
         self.eos_token = "<|endoftext|>"
+        self.user_token = "<User>"
+        self.bot_token = "<Bot>"
         self.eos_idx = 50256 # from the downloaded json
-        self.special_tokens = [self.pad_token, self.eos_token]
+        self.special_tokens = [self.pad_token, self.eos_token, self.user_token, self.bot_token]
         self.pad_idx = self.encoder.add_special(self.pad_token)
         self.sta_idx = self.encoder.add_special(self.sta_token)
+        self.bot_idx = self.encoder.add_special(self.bot_token)
+        self.user_idx = self.encoder.add_special(self.user_token)
         
     def vocab_size(self):
         #50259 # 256 individual byte tokens, 50,000 merged tokens, and 3 special tokens: <|endoftext|> <|s|> <|p|> 
@@ -260,6 +264,10 @@ class BPETokenizer(Tokenizer):
             return self.pad_idx
         if token == self.sta_token:
             return self.sta_idx
+        if token == self.bot_token:
+            return self.bot_idx
+        if token == self.user_token:
+            return self.user_idx
         #<|endoftext|>
         return self.eos_idx 
     
