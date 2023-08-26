@@ -168,6 +168,90 @@ if __name__ == "__main__":
         }
     ]
     
+    qa_pairs_val = [
+        {
+            "question": "Which Stephen King adaptation is set in a prison?",
+            "answer": "The Shawshank Redemption"
+        },
+        {
+            "question": "Which film has Tim Robbins and Morgan Freeman in a penitentiary?",
+            "answer": "The Shawshank Redemption"
+        },
+        {
+            "question": "Which movie quotes, 'Get busy living, or get busy dying'?",
+            "answer": "The Shawshank Redemption"
+        },
+        {
+            "question": "Which film has a protagonist escaping prison via a tunnel?",
+            "answer": "The Shawshank Redemption"
+        },
+        {
+            "question": "Which movie's lead is accused of killing his wife and lover?",
+            "answer": "The Shawshank Redemption"
+        },
+        {
+            "question": "Which Coppola film centers around the Corleone family?",
+            "answer": "The Godfather"
+        },
+        {
+            "question": "Which mafia film stars Pacino, Duvall, and Brando?",
+            "answer": "The Godfather"
+        },
+        {
+            "question": "Which film says, 'An offer he can't refuse'?",
+            "answer": "The Godfather"
+        },
+        {
+            "question": "Which movie has a horse head in a producer's bed?",
+            "answer": "The Godfather"
+        },
+        {
+            "question": "Which film starts with, 'I believe in America'?",
+            "answer": "The Godfather"
+        },
+        {
+            "question": "Which movie features Ledger's Joker?",
+            "answer": "The Dark Knight"
+        },
+        {
+            "question": "Which 'Batman Begins' sequel has Batman versus Joker?",
+            "answer": "The Dark Knight"
+        },
+        {
+            "question": "From which film is the line, 'Why so serious?'?",
+            "answer": "The Dark Knight"
+        },
+        {
+            "question": "Which Nolan film has a flipped semi-truck?",
+            "answer": "The Dark Knight"
+        },
+        {
+            "question": "In which film must Batman choose between Dent and Dawes?",
+            "answer": "The Dark Knight"
+        },
+        {
+            "question": "Which sequel shows a young Vito Corleone?",
+            "answer": "The Godfather Part II"
+        },
+        {
+            "question": "De Niro won an Oscar for which crime family film?",
+            "answer": "The Godfather Part II"
+        },
+        {
+            "question": "Which film shows Vito's early life and Michael's rise?",
+            "answer": "The Godfather Part II"
+        },
+        {
+            "question": "Which film is mostly in a jury room?",
+            "answer": "12 Angry Men"
+        },
+        {
+            "question": "Which film has Fonda as a doubting juror?",
+            "answer": "12 Angry Men"
+        }
+    ]
+
+    
     qa_pairs2 = [
         {
             "question": "Hello?",
@@ -196,6 +280,9 @@ if __name__ == "__main__":
     
     input_sequences, target_sequences = sequencer.parse_qa(qa_pairs)
 
+    val_input_sequences, val_target_sequences = sequencer.parse_qa(qa_pairs_val)
+
+
     print(len(input_sequences))
     
     
@@ -212,12 +299,12 @@ if __name__ == "__main__":
     #exit()
     
     # Hyperparameters
-    BATCH_SIZE = 128
+    BATCH_SIZE = 32
     NUM_TOKENS = tokenizer.vocab_size()
-    epochs = 500
+    epochs = 200
     embed_dim = 128
-    num_heads = 2
-    num_layers = 2
+    num_heads = 4
+    num_layers = 4
     dropout = 0.1
     
     do_training = True
@@ -236,10 +323,15 @@ if __name__ == "__main__":
     print(f"NUM_TOKENS: {NUM_TOKENS}")
 
     # Prepare data for DataLoader
-    X = torch.tensor(input_sequences).to(device)
-    Y = torch.tensor(target_sequences).to(device)
+    X = torch.tensor(input_sequences)
+    Y = torch.tensor(target_sequences)
     tensor_dataset = TensorDataset(X, Y)
-    dataloader = DataLoader(tensor_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    dataloader = DataLoader(tensor_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    
+    vX = torch.tensor(input_sequences)
+    vY = torch.tensor(target_sequences)
+    v_tensor_dataset = TensorDataset(vX, vY)
+    val_dataloader = DataLoader(v_tensor_dataset, batch_size=BATCH_SIZE, shuffle=False)
     
     # Instantiate and train the model
     model = tt.TextTransformer(
@@ -264,7 +356,15 @@ if __name__ == "__main__":
     pad_idx = tokenizer.special_token_to_index(tokenizer.pad_token)
     
     if do_training:
-        tt.train_text(model, dataloader, NUM_TOKENS, pad_idx, epochs=epochs)
+        tt.train_text(
+            model, 
+            dataloader, 
+            NUM_TOKENS, 
+            pad_idx, 
+            val_dataloader=val_dataloader, 
+            device=device, 
+            epochs=epochs
+        )
     
     print("Training finished!")
     

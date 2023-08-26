@@ -167,7 +167,7 @@ class TextTransformer(nn.Module):
         return epoch
 
     
-def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
+def train_text(model, dataloader, NUM_TOKENS, pad_token, val_dataloader=None, device='cpu', epochs=50, lr=0.001):
     model.train()
     
     lowest_loss = None
@@ -177,7 +177,10 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
     
     for epoch in trange(epochs, desc="Training"):
         epoch_loss = 0
+        model.train()
         for batch_idx, (x, y) in enumerate(tqdm(dataloader, leave=False, desc="Batch")):
+            x = x.to(device)
+            y = y.to(device)
             
             optimizer.zero_grad()
             padding_mask, look_ahead_mask = model.create_masks(x, pad_token)
@@ -192,14 +195,32 @@ def train_text(model, dataloader, NUM_TOKENS, pad_token, epochs=50, lr=0.001):
             optimizer.step()
             epoch_loss += loss.item()
         
+        val_loss = 0
+        if val_dataloader is not None:
+            with torch.no_grad():
+                model.eval()
+                for batch_idx, (x, y) in enumerate(tqdm(val_dataloader, leave=False, desc="Validation")):
+                    x = x.to(device)
+                    y = y.to(device)
+                    _, look_ahead_mask = model.create_masks(x, pad_token)
+            
+                    outputs,z = model(
+                        x,
+                        padding_mask=None,
+                        look_ahead_mask=look_ahead_mask)
+                        
+                    loss = F.cross_entropy(outputs.view(-1, NUM_TOKENS), y.view(-1))
+                    val_loss += loss.item()
+            val_loss = val_loss / len(val_dataloader)
+        
         avg_epoch_loss = epoch_loss / len(dataloader)
-        print(f"Epoch Loss: {avg_epoch_loss}")
+        print(f"Epoch Loss: {avg_epoch_loss:.6f} Val loss: {val_loss:.6f}")
         
         if save_enabled:
             folder = "checkpoints"
             path = torch_utils.create_directory(folder)
 
-            model.save(path / f"tinygpt_checkpoint.epoch{epoch}.pth", optimizer, epoch)
+            model.save(path / f"tinygpt_checkpoint.latest.pth", optimizer, epoch)
             if lowest_loss is None:
                 lowest_loss = avg_epoch_loss+1
             if avg_epoch_loss < lowest_loss:
